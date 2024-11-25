@@ -17,7 +17,7 @@ from .wallet_service import WalletService
 from jmbitcoin import make_shuffled_tx, amount_to_str, \
                        PartiallySignedTransaction, CMutableTxOut,\
                        human_readable_transaction
-from jmbase.support import EXIT_SUCCESS
+from jmbase.support import EXIT_SUCCESS, twisted_sys_exit
 log = get_log()
 
 """
@@ -34,7 +34,7 @@ def get_utxo_scripts(wallet: BaseWallet, utxos: dict) -> list:
         script_types.append(wallet.get_outtype(utxo["address"]))
     return script_types
 
-def direct_send(wallet_service: WalletService,
+async def direct_send(wallet_service: WalletService,
                 mixdepth: int,
                 dest_and_amounts: List[Tuple[str, int]],
                 answeryes: bool = False,
@@ -128,7 +128,8 @@ def direct_send(wallet_service: WalletService,
         #doing a sweep
         destination = dest_and_amounts[0][0]
         amount = dest_and_amounts[0][1]
-        utxos = wallet_service.get_utxos_by_mixdepth()[mixdepth]
+        _utxos = await wallet_service.get_utxos_by_mixdepth()
+        utxos = _utxos[mixdepth]
         if utxos == {}:
             log.error(
                 f"There are no available utxos in mixdepth {mixdepth}, "
@@ -162,8 +163,8 @@ def direct_send(wallet_service: WalletService,
         # of non-standard input types at this point.
         initial_fee_est = estimate_tx_fee(8, len(dest_and_amounts) + 1,
                                           txtype=txtype, outtype=outtypes)
-        utxos = wallet_service.select_utxos(mixdepth, amount + initial_fee_est,
-                                            includeaddr=True)
+        utxos = await wallet_service.select_utxos(
+            mixdepth, amount + initial_fee_est, includeaddr=True)
         script_types = get_utxo_scripts(wallet_service.wallet, utxos)
         if len(utxos) < 8:
             fee_est = estimate_tx_fee(len(utxos), len(dest_and_amounts) + 1,
@@ -175,7 +176,7 @@ def direct_send(wallet_service: WalletService,
         outs = []
         for out in dest_and_amounts:
             outs.append({"value": out[1], "address": out[0]})
-        change_addr = wallet_service.get_internal_addr(mixdepth) \
+        change_addr = await wallet_service.get_internal_addr(mixdepth) \
             if custom_change_addr is None else custom_change_addr
         outs.append({"value": changeval, "address": change_addr})
 
@@ -215,8 +216,10 @@ def direct_send(wallet_service: WalletService,
     if with_final_psbt:
         # here we have the PSBTWalletMixin do the signing stage
         # for us:
-        new_psbt = wallet_service.create_psbt_from_tx(tx, spent_outs=spent_outs)
-        serialized_psbt, err = wallet_service.sign_psbt(new_psbt.serialize())
+        new_psbt = await wallet_service.create_psbt_from_tx(
+            tx, spent_outs=spent_outs)
+        serialized_psbt, err = await wallet_service.sign_psbt(
+            new_psbt.serialize())
         if err:
             log.error("Failed to sign PSBT, quitting. Error message: " + err)
             return False
@@ -225,7 +228,7 @@ def direct_send(wallet_service: WalletService,
         print(wallet_service.human_readable_psbt(new_psbt_signed))
         return new_psbt_signed
     else:
-        success, msg = wallet_service.sign_tx(tx, inscripts)
+        success, msg = await wallet_service.sign_tx(tx, inscripts)
         if not success:
             log.error("Failed to sign transaction, quitting. Error msg: " + msg)
             return
@@ -305,7 +308,7 @@ def restart_wait(txid):
         return False
     if res["confirmations"] < 0:
         log.warn("Tx: " + txid + " has a conflict, abandoning.")
-        sys.exit(EXIT_SUCCESS)
+        twisted_sys_exit(EXIT_SUCCESS)
     else:
         log.debug("Tx: " + str(txid) + " has " + str(
                 res["confirmations"]) + " confirmations.")

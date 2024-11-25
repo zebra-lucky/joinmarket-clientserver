@@ -17,7 +17,7 @@ bobkey
 commitments_debug.txt
 dummyext
 deps/
-jmvenv/
+jmvenv*/
 logs/
 miniircd/
 miniircd.tar.gz

@@ -11,7 +11,7 @@ from twisted.internet import reactor, task
 
 import jmbitcoin as btc
 from jmbase import bintohex, hextobin, stop_reactor
-from jmbase.support import get_log, jmprint, EXIT_FAILURE
+from jmbase.support import get_log, jmprint, EXIT_FAILURE, twisted_sys_exit
 from jmclient.configure import jm_single
 from jmclient.jsonrpc import JsonRpc, JsonRpcConnectionError, JsonRpcError
 
@@ -490,7 +490,7 @@ class BitcoinCoreInterface(BlockchainInterface):
                 restart_cb(fatal_msg)
             else:
                 jmprint(fatal_msg, "important")
-            sys.exit(EXIT_FAILURE)
+            twisted_sys_exit(EXIT_FAILURE)
 
     def import_addresses_if_needed(self, addresses: Set[str], wallet_name: str) -> bool:
         if wallet_name in self._rpc('listlabels', []):
@@ -533,12 +533,12 @@ class BitcoinCoreInterface(BlockchainInterface):
                 restart_cb(fatal_msg)
             else:
                 jmprint(fatal_msg, "important")
-            sys.exit(EXIT_FAILURE)
+            twisted_sys_exit(EXIT_FAILURE)
 
     def import_descriptors_if_needed(self, descriptors: Set[str], wallet_name: str) -> bool:
         if wallet_name in self._rpc('listlabels', []):
-            imported_descriptors = set(self._rpc('getaddressesbylabel',
-                                                 [wallet_name]).keys())
+            list_desc = self._rpc('listdescriptors', []).get('descriptors', [])
+            imported_descriptors = set([x['desc'] for x in list_desc])
         else:
             imported_descriptors = set()
         import_needed = not descriptors.issubset(imported_descriptors)

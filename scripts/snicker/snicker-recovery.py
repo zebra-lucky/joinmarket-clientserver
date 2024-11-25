@@ -24,8 +24,13 @@ keys, so as a reminder, *always* back up either jmdat wallet files,
 or at least, the imported keys themselves.)
 """
 
+import asyncio
 import sys
 from optparse import OptionParser
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import bintohex, EXIT_ARGERROR, jmprint
 import jmbitcoin as btc
 from jmclient import (add_base_options, load_program_config,
@@ -71,7 +76,7 @@ def get_pubs_and_indices_of_ancestor_inputs(txin, wallet_service, ours):
     tx = wallet_service.get_transaction(txin.prevout.hash[::-1])
     return get_pubs_and_indices_of_inputs(tx, wallet_service, ours=ours)
 
-def main():
+async def main():
     parser = OptionParser(
         usage=
         'usage: %prog [options] walletname',
@@ -104,7 +109,7 @@ def main():
     wallet_name = args[0]
     wallet_path = get_wallet_path(wallet_name, None)
     max_mix_depth = max([options.mixdepth, options.amtmixdepths - 1])
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
         wallet_path, wallet_name, max_mix_depth,
         wallet_password_stdin=options.wallet_password_stdin,
         gap_limit=options.gaplimit)
@@ -161,7 +166,7 @@ def main():
                             for (our_pub, j) in get_pubs_and_indices_of_ancestor_inputs(tx.vin[mi], wallet_service, ours=True):
                                 our_spk = wallet_service.pubkey_to_script(our_pub)
                                 our_priv = wallet_service.get_key_from_addr(
-                                    wallet_service.script_to_addr(our_spk))
+                                    await wallet_service.script_to_addr(our_spk))
                                 tweak_bytes = btc.ecdh(our_priv[:-1], other_pub)
                                 tweaked_pub = btc.snicker_pubkey_tweak(our_pub, tweak_bytes)
                                 tweaked_spk = wallet_service.pubkey_to_script(tweaked_pub)
@@ -169,7 +174,7 @@ def main():
                                     # TODO wallet.script_to_addr has a dubious assertion, that's why
                                     # we use btc method directly:
                                     address_found = str(btc.CCoinAddress.from_scriptPubKey(btc.CScript(tweaked_spk)))
-                                    #address_found = wallet_service.script_to_addr(tweaked_spk)
+                                    #address_found = await wallet_service.script_to_addr(tweaked_spk)
                                     jmprint("Found a new SNICKER output belonging to us.")
                                     jmprint("Output address {} in the following transaction:".format(
                                         address_found))
@@ -178,8 +183,9 @@ def main():
                                     # NB for a recovery we accept putting any imported keys all into
                                     # the same mixdepth (0); TODO investigate correcting this, it will
                                     # be a little complicated.
-                                    success, msg = wallet_service.check_tweak_matches_and_import(wallet_service.script_to_addr(our_spk),
-                                                tweak_bytes, tweaked_pub, wallet_service.mixdepth)
+                                    success, msg = await wallet_service.check_tweak_matches_and_import(
+                                        await wallet_service.script_to_addr(our_spk),
+                                        tweak_bytes, tweaked_pub, wallet_service.mixdepth)
                                     if not success:
                                         jmprint("Failed to import SNICKER key: {}".format(msg), "error")
                                         return False
@@ -199,9 +205,16 @@ def main():
             "restarting this script.".format(earliest_new_blockheight))
     return False
 
-if __name__ == "__main__":
-    res = main()
+
+async def _main():
+    res = await main()
     if not res:
         jmprint("Script finished, recovery is NOT complete.", level="warning")
     else:
         jmprint("Script finished, recovery is complete.")
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

@@ -22,7 +22,11 @@ arguments:
 
 """
 
+import asyncio
+
+import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+
 from twisted.internet.defer import Deferred
 from twisted.web.server import Site
 from twisted.web.resource import Resource
@@ -34,6 +38,7 @@ import json
 import sqlite3
 import threading
 from io import BytesIO
+
 from jmbase import jmprint, hextobin, verify_pow
 from jmclient import process_shutdown, jm_single, load_program_config, check_and_start_tor
 from jmclient.configure import get_log
@@ -329,7 +334,7 @@ def snicker_server_start(port, local_port=None, hsdir=None):
     ssm = SNICKERServerManager(port, local_port=local_port, hsdir=hsdir)
     ssm.start_snicker_server_and_tor()
 
-if __name__ == "__main__":
+async def _main():
     load_program_config(bs="no-blockchain")
     check_and_start_tor()
     # in testing, we can optionally use ephemeral;
@@ -341,4 +346,9 @@ if __name__ == "__main__":
         local_port = int(sys.argv[2])
         hsdir = sys.argv[3]
         snicker_server_start(port, local_port, hsdir)
+    # reactor.run()
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
     reactor.run()

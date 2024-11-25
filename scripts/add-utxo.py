@@ -5,11 +5,15 @@ users to retry transactions more often without getting banned by
 the anti-snooping feature employed by makers.
 """
 
+import asyncio
 import sys
 import os
 import json
 from pprint import pformat
 from optparse import OptionParser
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
 
 from jmclient import load_program_config, jm_single,\
     open_wallet, WalletService, add_external_commitments, update_commitments,\
@@ -48,7 +52,7 @@ def add_ext_commitments(utxo_datas):
             ecs[u]['reveal'][j] = {'P2':P2, 's':s, 'e':e}
     add_external_commitments(ecs)
 
-def main():
+async def main():
     parser = OptionParser(
         usage=
         'usage: %prog [options] [txid:n]',
@@ -171,7 +175,7 @@ def main():
     #csv file or json file.
     if options.loadwallet:
         wallet_path = get_wallet_path(options.loadwallet)
-        wallet = open_wallet(wallet_path, gap_limit=options.gaplimit)
+        wallet = await open_wallet(wallet_path, gap_limit=options.gaplimit)
         wallet_service = WalletService(wallet)
         if wallet_service.rpc_error:
             sys.exit(EXIT_FAILURE)
@@ -182,7 +186,8 @@ def main():
         # minor note: adding a utxo from an external wallet for commitments, we
         # default to not allowing disabled utxos to avoid a privacy leak, so the
         # user would have to explicitly enable.
-        for md, utxos in wallet_service.get_utxos_by_mixdepth().items():
+        _utxos = await wallet_service.get_utxos_by_mixdepth()
+        for md, utxos in _utxos.items():
             for utxo, utxodata in utxos.items():
                 wif = wallet_service.get_wif_path(utxodata['path'])
                 utxo_data.append((utxo, wif))
@@ -245,6 +250,12 @@ def main():
     assert len(utxo_data)
     add_ext_commitments(utxo_data)
 
-if __name__ == "__main__":
-    main()
+async def _main():
+    await main()
     jmprint('done', "success")
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

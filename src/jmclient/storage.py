@@ -365,3 +365,186 @@ class VolatileStorage(Storage):
 
     def get_location(self):
         return None
+
+
+class DKGStorage(Storage):
+
+    MAGIC_UNENC = b'JMDKGDAT'
+    MAGIC_ENC =   b'JMDKGENC'
+    MAGIC_DETECT_ENC = b'JMDKGDAT'
+
+    @staticmethod
+    def dkg_path(path):
+        return f'{path}.dkg'
+
+
+class DKGRecoveryStorage(object):
+
+    MAGIC_UNENC = b'JMDKGREC'
+
+    def __init__(self, path, create=False, read_only=False):
+        self.path = path
+        self._lock_file = None
+        self._data_checksum = None
+        self.data = None
+        self.read_only = read_only
+        self.newly_created = False
+
+        if not os.path.isfile(path):
+            if create and not read_only:
+                self._create_new()
+                self._save_file()
+                self.newly_created = True
+            else:
+                raise StorageError(f'DKG Recovery File {self.path} not found.')
+        elif create:
+            raise StorageError(f'DKG Recovery File {self.path} '
+                               f'already exists.')
+        else:
+            self._load_file()
+
+        assert self.data is not None
+        assert self._data_checksum is not None
+
+        self._create_lock()
+
+    @staticmethod
+    def dkg_recovery_path(path):
+        return f'{path}.dkg_recovery'
+
+    @staticmethod
+    def _serialize(data):
+        return bencoder.bencode(data)
+
+    @staticmethod
+    def _deserialize(data):
+        return bencoder.bdecode(data)
+
+    @staticmethod
+    def _get_lock_filename(path: str) -> str:
+        (path_head, path_tail) = os.path.split(path)
+        return os.path.join(path_head, '.' + path_tail + '.lock')
+
+    @classmethod
+    def verify_lock(cls, path: str):
+        locked_by_pid = cls._get_locking_pid(path)
+        if locked_by_pid >= 0:
+            raise RetryableStorageError(
+                "File is currently in use (locked by pid {}). "
+                "If this is a leftover from a crashed instance "
+                "you need to remove the lock file `{}` manually.".
+                format(locked_by_pid, cls._get_lock_filename(path))
+            )
+
+    @classmethod
+    def _get_locking_pid(cls, path: str) -> int:
+        """Return locking PID, -1 if no lockfile if found, 0 if PID cannot be read."""
+        try:
+            with open(cls._get_lock_filename(path), 'r') as f:
+                return int(f.read())
+        except FileNotFoundError:
+            return -1
+        except ValueError:
+            return 0
+
+    @classmethod
+    def is_storage_file(cls, path):
+        return cls._get_file_magic(path) == cls.MAGIC_UNENC
+
+    @classmethod
+    def _get_file_magic(cls, path):
+        with open(path, 'rb') as fh:
+            return fh.read(len(cls.MAGIC_UNENC))
+
+    def _create_new(self):
+        self.data = {}
+
+    def _save_file(self):
+        assert self.read_only == False
+        data = self._serialize(self.data)
+        magic = self.MAGIC_UNENC
+        self._write_file(magic + data)
+        self._update_data_hash()
+
+    def _write_file(self, data):
+        assert self.read_only is False
+        if not os.path.exists(self.path):
+            # newly created storage
+            with open(self.path, 'wb') as fh:
+                fh.write(data)
+            return
+
+        # using a tmpfile ensures the write is atomic
+        tmpfile = '{}.tmp'.format(self.path)
+
+        with open(tmpfile, 'wb') as fh:
+            shutil.copystat(self.path, tmpfile)
+            fh.write(data)
+
+        #FIXME: behaviour with symlinks might be weird
+        shutil.move(tmpfile, self.path)
+
+    def _update_data_hash(self):
+        self._data_checksum = self._get_data_checksum()
+
+    def _get_data_checksum(self):
+        if self.data is None:  #pragma: no cover
+            return None
+        return sha256(self._serialize(self.data)).digest()
+
+    def _create_lock(self):
+        if not self.read_only:
+            self._lock_file = self._get_lock_filename(self.path)
+            try:
+                with open(self._lock_file, 'x') as f:
+                    f.write(str(os.getpid()))
+            except FileExistsError:
+                self._lock_file = None
+                self.verify_lock(self.path)
+
+        atexit.register(self.close)
+
+    def was_changed(self):
+        return self._data_checksum != self._get_data_checksum()
+
+    def save(self):
+        if self.read_only:
+            raise StorageError("Read-only recovery storage cannot be saved.")
+        self._save_file()
+
+    def _load_file(self):
+        data = self._read_file()
+        assert len(self.MAGIC_UNENC) == 8
+        magic = data[:8]
+
+        if magic != self.MAGIC_UNENC:
+            raise StorageError("File does not appear to be "
+                               "a DKG Recovery File.")
+
+        data = data[8:]
+        self.data = self._deserialize(data)
+        self._update_data_hash()
+
+    def _read_file(self):
+        # this method mainly exists for easier mocking
+        with open(self.path, 'rb') as fh:
+            return fh.read()
+
+    def get_location(self):
+        return self.path
+
+    def _remove_lock(self):
+        if self._lock_file is not None:
+            try:
+                os.remove(self._lock_file)
+            except FileNotFoundError:
+                pass
+
+    def close(self):
+        if not self.read_only and self.was_changed():
+            self._save_file()
+        self._remove_lock()
+        self.read_only = True
+
+    def __del__(self):
+        self.close()

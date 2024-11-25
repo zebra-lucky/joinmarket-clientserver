@@ -109,7 +109,7 @@ class SNICKERReceiver(object):
                 jlog.info("created proposals source file.")
 
 
-    def default_acceptance_callback(self, our_ins, their_ins,
+    async def default_acceptance_callback(self, our_ins, their_ins,
                                     our_outs, their_outs):
         """ Accepts lists of inputs as CTXIns,
         a single output (belonging to us) as a CTxOut,
@@ -124,7 +124,7 @@ class SNICKERReceiver(object):
         # ours.
         # we use get_all* because for these purposes mixdepth
         # is irrelevant.
-        utxos = self.wallet_service.get_all_utxos()
+        utxos = await self.wallet_service.get_all_utxos()
         our_in_amts = []
         our_out_amts = []
         for i in our_ins:
@@ -149,7 +149,7 @@ class SNICKERReceiver(object):
         self.successful_txs.append(tx)
         jlog.info(btc.human_readable_transaction(tx))
 
-    def process_proposals(self, proposals):
+    async def process_proposals(self, proposals):
         """ This is the "meat" of the SNICKERReceiver service.
         It parses proposals and creates and broadcasts transactions
         with the wallet, assuming all conditions are met.
@@ -199,7 +199,7 @@ class SNICKERReceiver(object):
                     jlog.debug("Key not recognized as part of our "
                                "wallet, ignoring.")
                     continue
-                result = self.wallet_service.parse_proposal_to_signed_tx(
+                result = await self.wallet_service.parse_proposal_to_signed_tx(
                     addr, p, self.acceptance_callback)
                 if result[0] is not None:
                     tx, tweak, out_spk = result
@@ -234,7 +234,7 @@ class SNICKERReceiver(object):
                     # the coinjoin transaction to the network, which is advisably
                     # conservative (never possible to have broadcast a tx without
                     # having already stored the output's key).
-                    success, msg = self.wallet_service.check_tweak_matches_and_import(
+                    success, msg = await self.wallet_service.check_tweak_matches_and_import(
                         addr, tweak, tweaked_key, source_mixdepth)
                     if not success:
                         jlog.error(msg)

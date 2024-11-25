@@ -53,7 +53,8 @@ bond_exponent = None
 #Initial state: allow only SW offer types
 sw0offers = list(filter(lambda x: x[0:3] == 'sw0', offername_list))
 swoffers = list(filter(lambda x: x[0:3] == 'swa' or x[0:3] == 'swr', offername_list))
-filtered_offername_list = sw0offers
+troffers = list(filter(lambda x: x[0:3] == 'tra' or x[0:3] == 'trr', offername_list))
+filtered_offername_list = troffers  # FIXME allow selection of offers types
 
 rotateObform = '<form action="rotateOb" method="post"><input type="submit" value="Rotate orderbooks"/></form>'
 refresh_orderbook_form = '<form action="refreshorderbook" method="post"><input type="submit" value="Check for timed-out counterparties" /></form>'
@@ -80,7 +81,8 @@ def do_nothing(arg, order, btc_unit, rel_unit):
 
 def ordertype_display(ordertype, order, btc_unit, rel_unit):
     ordertypes = {'sw0absoffer': 'Native SW Absolute Fee', 'sw0reloffer': 'Native SW Relative Fee',
-                  'swabsoffer': 'SW Absolute Fee', 'swreloffer': 'SW Relative Fee'}
+                  'swabsoffer': 'SW Absolute Fee', 'swreloffer': 'SW Relative Fee',
+                  'trabsoffer': 'Taproot Absolute Fee', 'trreloffer': 'Taproot Relative Fee'}
     return ordertypes[ordertype]
 
 
@@ -88,13 +90,14 @@ def cjfee_display(cjfee: Union[Decimal, float, int],
                   order: dict,
                   btc_unit: str,
                   rel_unit: str) -> str:
-    if order['ordertype'] in ['swabsoffer', 'sw0absoffer']:
+    if order['ordertype'] in ['trabsoffer', 'swabsoffer', 'sw0absoffer']:
         val = sat_to_unit(cjfee, html.unescape(btc_unit))
         if btc_unit == "BTC":
             return "%.8f" % val
         else:
             return str(val)
-    elif order['ordertype'] in ['reloffer', 'swreloffer', 'sw0reloffer']:
+    elif order['ordertype'] in ['trreloffer', 'reloffer', 'swreloffer',
+                                'sw0reloffer']:
         return str(Decimal(cjfee) * Decimal(rel_unit_to_factor[rel_unit])) + rel_unit
 
 
@@ -245,8 +248,8 @@ class OrderbookPageRequestHeader(http.server.SimpleHTTPRequestHandler):
         for row in rows:
             o = dict(row)
             if 'cjfee' in o:
-                if o['ordertype'] == 'swabsoffer'\
-                   or o['ordertype'] == 'sw0absoffer':
+                if o['ordertype'] in ['trabsoffer', 'swabsoffer',
+                                      'sw0absoffer']:
                     o['cjfee'] = int(o['cjfee'])
                 else:
                     o['cjfee'] = str(Decimal(o['cjfee']))

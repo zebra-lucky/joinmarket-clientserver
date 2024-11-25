@@ -1,5 +1,7 @@
+# -*- coding: utf-8 -*-
 
 import logging
+
 from .protocol import *
 from .enc_wrapper import as_init_encryption, decode_decrypt, \
     encrypt_encode, init_keypair, init_pubkey, get_pubkey, NaclError

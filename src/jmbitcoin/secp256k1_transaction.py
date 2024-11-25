@@ -219,11 +219,10 @@ def pubkey_to_p2sh_p2wpkh_script(pub: bytes) -> CScript:
     return pubkey_to_p2wpkh_script(pub).to_p2sh_scriptPubKey()
 
 def pubkey_to_p2tr_script(pub: bytes) -> CScript:
-    """
-    Given a pubkey in bytes (compressed), return a CScript
-    representing the corresponding pay-to-taproot scriptPubKey.
-    """
     return P2TRCoinAddress.from_pubkey(pub).to_scriptPubKey()
+
+def output_pubkey_to_p2tr_script(pub: bytes) -> CScript:
+    return P2TRCoinAddress.from_output_pubkey(pub).to_scriptPubKey()
 
 def redeem_script_to_p2wsh_script(redeem_script: Union[bytes, CScript]) -> CScript:
     """ Given redeem script of type CScript (or bytes)
@@ -374,6 +373,43 @@ def sign(
             return return_err(e)
 
         return sig, "signing succeeded"
+
+
+def add_frost_sig(
+    tx: CMutableTransaction,
+    i: int,
+    pub: bytes,
+    sig: bytes,
+    amount: Optional[int] = None,
+    *,
+    spent_outputs: Optional[List[CTxOut]] = None
+) -> Tuple[Optional[bytes], str]:
+    # script verification flags
+    flags = set([SCRIPT_VERIFY_STRICTENC])
+
+    def return_err(e):
+        return None, "Error in signing: " + repr(e)
+
+    assert isinstance(tx, CMutableTransaction)
+
+    flags.add(SCRIPT_VERIFY_P2SH)
+    flags.add(SCRIPT_VERIFY_WITNESS)
+
+    assert spent_outputs
+    witness = [sig]
+    ctxwitness = CTxInWitness(CScriptWitness(witness))
+    tx.wit.vtxinwit[i] = ctxwitness
+    try:
+        input_scriptPubKey = pubkey_to_p2tr_script(pub)
+        VerifyScript(
+            tx.vin[i].scriptSig, input_scriptPubKey, tx, i,
+            flags=flags, amount=amount,
+            witness=tx.wit.vtxinwit[i].scriptWitness,
+            spent_outputs=spent_outputs)
+    except ValidationError as e:
+        return return_err(e)
+    return sig, "signing succeeded"
+
 
 def mktx(ins: List[Tuple[bytes, int]],
          outs: List[dict],

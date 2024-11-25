@@ -1,9 +1,13 @@
 #! /usr/bin/env python
 
+import asyncio
 import base64
+import hashlib
 import pprint
 import random
 from typing import Any, NamedTuple, Optional
+
+from bitcointx.core.key import XOnlyPubKey
 from twisted.internet import reactor, task
 
 import jmbitcoin as btc
@@ -13,7 +17,7 @@ from jmclient.support import (calc_cj_fee, fidelity_bond_weighted_order_choose, 
                               choose_sweep_orders)
 from jmclient.wallet import (estimate_tx_fee, compute_tx_locktime,
                              FidelityBondMixin, UnknownAddressForLabel,
-                             TaprootWallet)
+                             TaprootWallet, FrostWallet)
 from jmclient.podle import generate_podle, get_podle_commitments
 from jmclient.wallet_service import WalletService
 from jmclient.fidelity_bond import FidelityBondProof
@@ -171,19 +175,27 @@ class Taker(object):
                 return
         self.honest_only = truefalse
 
-    def initialize(self, orderbook, fidelity_bonds_info):
+    async def initialize(self, orderbook, fidelity_bonds_info):
         """Once the daemon is active and has returned the current orderbook,
         select offers, re-initialize variables and prepare a commitment,
         then send it to the protocol to fill offers.
         """
         if self.aborted:
             return (False,)
-        self.taker_info_callback("INFO", "Received offers from joinmarket pit")
+        info_cb_res = self.taker_info_callback(
+            "INFO", "Received offers from joinmarket pit")
+        if asyncio.iscoroutine(self.taker_info_callback):
+            await info_cb_res
         #choose the next item in the schedule
         self.schedule_index += 1
         if self.schedule_index == len(self.schedule):
-            self.taker_info_callback("INFO", "Finished all scheduled transactions")
-            self.on_finished_callback(True)
+            info_cb_res = self.taker_info_callback(
+                "INFO", "Finished all scheduled transactions")
+            if asyncio.iscoroutine(self.taker_info_callback):
+                await info_cb_res
+            finished_cb_res = self.on_finished_callback(True)
+            if asyncio.iscoroutine(self.on_finished_callback):
+                await finished_cb_res
             return (False,)
         else:
             #read the settings from the schedule entry
@@ -224,7 +236,8 @@ class Taker(object):
                     self.wallet_service.mixdepth + 1)
                 jlog.info("Choosing a destination from mixdepth: " + str(
                     next_mixdepth))
-                self.my_cj_addr = self.wallet_service.get_internal_addr(next_mixdepth)
+                self.my_cj_addr = await self.wallet_service.get_internal_addr(
+                    next_mixdepth)
                 jlog.info("Chose destination address: " + self.my_cj_addr)
             self.outputs = []
             self.cjfee_total = 0
@@ -238,14 +251,17 @@ class Taker(object):
             offer["fidelity_bond_value"] = fidelity_bond_values.get(offer["counterparty"], 0)
 
         sweep = True if self.cjamount == 0 else False
-        if not self.filter_orderbook(orderbook, sweep):
+        if not await self.filter_orderbook(orderbook, sweep):
             return (False,)
         #choose coins to spend
-        self.taker_info_callback("INFO", "Preparing bitcoin data..")
-        if not self.prepare_my_bitcoin_data():
+        info_cb_res = self.taker_info_callback(
+            "INFO", "Preparing bitcoin data..")
+        if asyncio.iscoroutine(self.taker_info_callback):
+            await info_cb_res
+        if not await self.prepare_my_bitcoin_data():
             return (False,)
         #Prepare a commitment
-        commitment, revelation, errmsg = self.make_commitment()
+        commitment, revelation, errmsg = await self.make_commitment()
         if not commitment:
             utxo_pairs, to, ts = revelation
             if len(to) == 0:
@@ -253,20 +269,26 @@ class Taker(object):
                 #until they get old enough; otherwise, we have to abort
                 #(TODO, it's possible for user to dynamically add more coins,
                 #consider if this option means we should stay alive).
-                self.taker_info_callback("ABORT", errmsg)
+                info_cb_res = self.taker_info_callback("ABORT", errmsg)
+                if asyncio.iscoroutine(self.taker_info_callback):
+                    await info_cb_res
                 return ("commitment-failure",)
             else:
-                self.taker_info_callback("INFO", errmsg)
+                info_cb_res = self.taker_info_callback("INFO", errmsg)
+                if asyncio.iscoroutine(self.taker_info_callback):
+                    await info_cb_res
                 return (False,)
         else:
-            self.taker_info_callback("INFO", errmsg)
+            info_cb_res = self.taker_info_callback("INFO", errmsg)
+            if asyncio.iscoroutine(self.taker_info_callback):
+                await info_cb_res
 
         #Initialization has been successful. We must set the nonrespondants
         #now to keep track of what changed when we receive the utxo data
         self.nonrespondants = list(self.orderbook.keys())
         return (True, self.cjamount, commitment, revelation, self.orderbook)
 
-    def filter_orderbook(self, orderbook, sweep=False):
+    async def filter_orderbook(self, orderbook, sweep=False):
         #If honesty filter is set, we immediately filter to only the prescribed
         #honest makers before continuing. In this case, the number of
         #counterparties should already match, and this has to be set by the
@@ -303,6 +325,8 @@ class Taker(object):
                 accepted = self.filter_orders_callback([self.orderbook,
                                                         self.total_cj_fee],
                                                        self.cjamount)
+                if asyncio.iscoroutine(self.filter_orders_callback):
+                    accepted = await accepted
                 if accepted == "retry":
                     #Special condition if Taker is "determined to continue"
                     #(such as tumbler); even though these offers are rejected,
@@ -313,7 +337,7 @@ class Taker(object):
                     return False
         return True
 
-    def prepare_my_bitcoin_data(self):
+    async def prepare_my_bitcoin_data(self):
         """Get a coinjoin address and a change address; prepare inputs
         appropriate for this transaction"""
         if not self.my_cj_addr:
@@ -324,7 +348,9 @@ class Taker(object):
                 self.my_change_addr = self.custom_change_address
             else:
                 try:
-                    self.my_change_addr = self.wallet_service.get_internal_addr(self.mixdepth)
+                    self.my_change_addr = \
+                        await self.wallet_service.get_internal_addr(
+                            self.mixdepth)
                     if self.change_label:
                         try:
                             self.wallet_service.set_address_label(
@@ -333,7 +359,10 @@ class Taker(object):
                             # ignore, will happen with custom change not part of a wallet
                             pass
                 except:
-                    self.taker_info_callback("ABORT", "Failed to get a change address")
+                    info_cb_res = self.taker_info_callback(
+                        "ABORT", "Failed to get a change address")
+                    if asyncio.iscoroutine(self.taker_info_callback):
+                        await info_cb_res
                     return False
             #adjust the required amount upwards to anticipate an increase in
             #transaction fees after re-estimation; this is sufficiently conservative
@@ -347,15 +376,19 @@ class Taker(object):
             total_amount = self.cjamount + self.total_cj_fee + self.total_txfee
             jlog.info('total estimated amount spent = ' + btc.amount_to_str(total_amount))
             try:
-                self.input_utxos = self.wallet_service.select_utxos(self.mixdepth, total_amount,
-                                                        minconfs=1)
+                self.input_utxos = await self.wallet_service.select_utxos(
+                    self.mixdepth, total_amount, minconfs=1)
             except Exception as e:
-                self.taker_info_callback("ABORT",
-                                    "Unable to select sufficient coins: " + repr(e))
+                info_cb_res = self.taker_info_callback(
+                    "ABORT", "Unable to select sufficient coins: " + repr(e))
+                if asyncio.iscoroutine(self.taker_info_callback):
+                    await info_cb_res
                 return False
         else:
             #sweep
-            self.input_utxos = self.wallet_service.get_utxos_by_mixdepth()[self.mixdepth]
+            ws = self.wallet_service
+            _utxos = await ws.get_utxos_by_mixdepth()
+            self.input_utxos = _utxos[self.mixdepth]
             self.my_change_addr = None
             #do our best to estimate the fee based on the number of
             #our own utxos; this estimate may be significantly higher
@@ -388,20 +421,25 @@ class Taker(object):
                 self.ignored_makers, allowed_types=allowed_types,
                 max_cj_fee=self.max_cj_fee)
             if not self.orderbook:
-                self.taker_info_callback("ABORT",
-                                "Could not find orders to complete transaction")
+                info_cb_res = self.taker_info_callback(
+                    "ABORT", "Could not find orders to complete transaction")
+                if asyncio.iscoroutine(self.taker_info_callback):
+                    await info_cb_res
                 return False
             if self.filter_orders_callback:
-                if not self.filter_orders_callback((self.orderbook,
-                                                    self.total_cj_fee),
-                                                   self.cjamount):
+                accepted = self.filter_orders_callback((self.orderbook,
+                                                        self.total_cj_fee),
+                                                       self.cjamount)
+                if asyncio.iscoroutine(self.filter_orders_callback):
+                    accepted = await accepted
+                if not accepted:
                     return False
 
         self.utxos = {None: list(self.input_utxos.keys())}
         return True
 
     @hexbin
-    def receive_utxos(self, ioauth_data):
+    async def receive_utxos(self, ioauth_data):
         """Triggered when the daemon returns utxo data from
         makers who responded; this is the completion of phase 1
         of the protocol
@@ -442,11 +480,17 @@ class Taker(object):
         #know for sure that the data meets all business-logic requirements.
         if len(self.maker_utxo_data) < jm_single().config.getint(
                 "POLICY", "minimum_makers"):
-            self.taker_info_callback("INFO", "Not enough counterparties, aborting.")
+            info_cb_res = self.taker_info_callback(
+                "INFO", "Not enough counterparties, aborting.")
+            if asyncio.iscoroutine(self.taker_info_callback):
+                await info_cb_res
             return (False,
                     "Not enough counterparties responded to fill, giving up")
 
-        self.taker_info_callback("INFO", "Got all parts, enough to build a tx")
+        info_cb_res = self.taker_info_callback(
+            "INFO", "Got all parts, enough to build a tx")
+        if asyncio.iscoroutine(self.taker_info_callback):
+            await info_cb_res
 
         #The list self.nonrespondants is now reset and
         #used to track return of signatures for phase 2
@@ -537,7 +581,10 @@ class Taker(object):
         jlog.info('obtained tx\n' + btc.human_readable_transaction(
             self.latest_tx))
 
-        self.taker_info_callback("INFO", "Built tx, sending to counterparties.")
+        info_cb_res = self.taker_info_callback(
+            "INFO", "Built tx, sending to counterparties.")
+        if asyncio.iscoroutine(self.taker_info_callback):
+            await info_cb_res
         return (True, list(self.maker_utxo_data.keys()),
                 self.latest_tx.serialize())
 
@@ -591,9 +638,14 @@ class Taker(object):
                     f"maker's ({nick}) proposed utxo is not confirmed, "
                     "rejecting."])
             try:
-                if self.wallet_service.pubkey_has_script(
-                        auth_pub, inp['script']):
-                    break
+                if isinstance(self.wallet_service.wallet, TaprootWallet):
+                    if self.wallet_service.output_pubkey_has_script(
+                            auth_pub, inp['script']):
+                        break
+                else:
+                    if self.wallet_service.pubkey_has_script(
+                            auth_pub, inp['script']):
+                        break
             except EngineError as e:
                 pass
         else:
@@ -627,17 +679,33 @@ class Taker(object):
         with an ecdsa verification.
         """
         try:
+            wallet = self.wallet_service.wallet
             # maker pubkey as message is in hex format:
-            if not btc.ecdsa_verify(bintohex(maker_pk), btc_sig, auth_pub):
-                jlog.debug('signature didnt match pubkey and message')
-                return False
+            if isinstance(wallet, (TaprootWallet, FrostWallet)):
+                pubkey = XOnlyPubKey(auth_pub)
+                kphex_hash = hashlib.sha256(
+                    bintohex(maker_pk).encode()).digest()
+                btc_sig = base64.b64decode(btc_sig)
+                if not pubkey.verify_schnorr(kphex_hash, btc_sig):
+                    jlog.debug('schnorr signature didnt match '
+                               'pubkey and message')
+                    return False
+            else:
+                if not btc.ecdsa_verify(bintohex(maker_pk), btc_sig, auth_pub):
+                    jlog.debug('signature didnt match pubkey and message')
+                    return False
         except Exception as e:
-            jlog.info("Failed ecdsa verify for maker pubkey: " + bintohex(maker_pk))
+            if isinstance(wallet, (TaprootWallet, FrostWallet)):
+                jlog.info("Failed schnorr verify for maker pubkey: " +
+                          bintohex(maker_pk))
+            else:
+                jlog.info("Failed ecdsa verify for maker pubkey: " +
+                          bintohex(maker_pk))
             jlog.info("Exception was: " + repr(e))
             return False
         return True
 
-    def on_sig(self, nick, sigb64):
+    async def on_sig(self, nick, sigb64):
         """Processes transaction signatures from counterparties.
         If all signatures received correctly, returns the result
         of self.self_sign_and_push() (i.e. we complete the signing
@@ -728,7 +796,7 @@ class Taker(object):
 
             spent_outputs = None
             wallet = self.wallet_service.wallet
-            if isinstance(wallet, TaprootWallet):
+            if isinstance(wallet, (TaprootWallet, FrostWallet)):
                 spent_outputs = wallet.get_spent_outputs(self.latest_tx)
             sig_good = btc.verify_tx_input(self.latest_tx, u[0], scriptSig,
                     scriptPubKey, amount=ver_amt, witness=witness,
@@ -776,11 +844,14 @@ class Taker(object):
             return False
         assert not len(self.nonrespondants)
         jlog.info('all makers have sent their signatures')
-        self.taker_info_callback("INFO", "Transaction is valid, signing..")
+        info_cb_res = self.taker_info_callback(
+            "INFO", "Transaction is valid, signing..")
+        if asyncio.iscoroutine(self.taker_info_callback):
+            await info_cb_res
         jlog.debug("schedule item was: " + str(self.schedule[self.schedule_index]))
-        return self.self_sign_and_push()
+        return await self.self_sign_and_push()
 
-    def make_commitment(self):
+    async def make_commitment(self):
         """The Taker default commitment function, which uses PoDLE.
         Alternative commitment types should use a different commit type byte.
         This will allow future upgrades to provide different style commitments
@@ -811,7 +882,7 @@ class Taker(object):
                     newresults.append(utxos[i])
             return newresults, too_new, too_small
 
-        def priv_utxo_pairs_from_utxos(utxos, age, amt):
+        async def priv_utxo_pairs_from_utxos(utxos, age, amt):
             #returns pairs list of (priv, utxo) for each valid utxo;
             #also returns lists "too_new" and "too_small" for any
             #utxos that did not satisfy the criteria for debugging.
@@ -822,9 +893,10 @@ class Taker(object):
             for k, v in new_utxos_dict.items():
                 # filter out any non-standard utxos:
                 path = self.wallet_service.script_to_path(v["script"])
-                if not self.wallet_service.is_standard_wallet_script(path):
+                ws = self.wallet_service
+                if not await ws.is_standard_wallet_script(path):
                     continue
-                addr = self.wallet_service.script_to_addr(v["script"])
+                addr = await self.wallet_service.script_to_addr(v["script"])
                 priv = self.wallet_service.get_key_from_addr(addr)
                 if priv:  #can be null from create-unsigned
                     priv_utxo_pairs.append((priv, k))
@@ -837,8 +909,8 @@ class Taker(object):
         amt = int(self.cjamount *
                   jm_single().config.getint("POLICY",
                                             "taker_utxo_amtpercent") / 100.0)
-        priv_utxo_pairs, to, ts = priv_utxo_pairs_from_utxos(self.input_utxos,
-                                                             age, amt)
+        priv_utxo_pairs, to, ts = await priv_utxo_pairs_from_utxos(
+            self.input_utxos, age, amt)
 
         #For podle data format see: podle.PoDLE.reveal()
         #In first round try, don't use external commitments
@@ -857,12 +929,15 @@ class Taker(object):
             #in the transaction, about to be consumed, rather than use
             #random utxos that will persist after. At this step we also
             #allow use of external utxos in the json file.
-            mixdepth_utxos = self.wallet_service.get_utxos_by_mixdepth()[self.mixdepth]
+            ws = self.wallet_service
+            _utxos = await ws.get_utxos_by_mixdepth()
+            mixdepth_utxos = _utxos[self.mixdepth]
             if len(self.input_utxos) == len(mixdepth_utxos):
                 # Already tried the whole mixdepth
                 podle_data = generate_podle([], tries, ext_valid)
             else:
-                priv_utxo_pairs, to, ts = priv_utxo_pairs_from_utxos(mixdepth_utxos, age, amt)
+                priv_utxo_pairs, to, ts = await priv_utxo_pairs_from_utxos(
+                    mixdepth_utxos, age, amt)
                 podle_data = generate_podle(priv_utxo_pairs, tries, ext_valid)
         if podle_data:
             jlog.debug("Generated PoDLE: " + repr(podle_data))
@@ -870,7 +945,8 @@ class Taker(object):
                     podle_data.serialize_revelation(),
                     "Commitment sourced OK")
         else:
-            errmsgheader, errmsg = generate_podle_error_string(priv_utxo_pairs,
+            errmsgheader, errmsg = await generate_podle_error_string(
+                        priv_utxo_pairs,
                         to, ts, self.wallet_service, self.cjamount,
                         jm_single().config.get("POLICY", "taker_utxo_age"),
                         jm_single().config.get("POLICY", "taker_utxo_amtpercent"))
@@ -890,7 +966,7 @@ class Taker(object):
             #Note: donation code removed (possibly temporarily)
             raise NotImplementedError
 
-    def self_sign(self):
+    async def self_sign(self):
         # now sign it ourselves
         our_inputs = {}
         for index, ins in enumerate(self.latest_tx.vin):
@@ -901,11 +977,12 @@ class Taker(object):
             script = self.input_utxos[utxo]['script']
             amount = self.input_utxos[utxo]['value']
             our_inputs[index] = (script, amount)
-        success, msg = self.wallet_service.sign_tx(self.latest_tx, our_inputs)
+        success, msg = await self.wallet_service.sign_tx(
+            self.latest_tx, our_inputs)
         if not success:
             jlog.error("Failed to sign transaction: " + msg)
 
-    def handle_unbroadcast_transaction(self, txid, tx):
+    async def handle_unbroadcast_transaction(self, txid, tx):
         """ The wallet service will handle dangling
         callbacks for transactions but we want to reattempt
         broadcast in case the cause of the problem is a
@@ -922,7 +999,10 @@ class Taker(object):
             if jm_single().config.get('POLICY', 'tx_broadcast') == "not-self":
                 warnmsg = ("You have chosen not to broadcast from your own "
                           "node. The transaction is NOT broadcast.")
-                self.taker_info_callback("ABORT", warnmsg + "\nSee log for details.")
+                info_cb_res = self.taker_info_callback(
+                    "ABORT", warnmsg + "\nSee log for details.")
+                if asyncio.iscoroutine(self.taker_info_callback):
+                    await info_cb_res
                 # warning is arguably not correct but it will stand out more:
                 jlog.warn(warnmsg)
                 jlog.info(btc.human_readable_transaction(tx))
@@ -934,7 +1014,7 @@ class Taker(object):
     def push_ourselves(self):
         return jm_single().bc_interface.pushtx(self.latest_tx.serialize())
 
-    def push(self):
+    async def push(self):
         jlog.debug('\n' + bintohex(self.latest_tx.serialize()))
         self.txid = bintohex(self.latest_tx.GetTxid()[::-1])
         jlog.info('txid = ' + self.txid)
@@ -955,7 +1035,8 @@ class Taker(object):
         task.deferLater(reactor,
                         float(jm_single().config.getint(
                             "TIMEOUT", "unconfirm_timeout_sec")),
-                        self.handle_unbroadcast_transaction, self.txid, self.latest_tx)
+                        self.handle_unbroadcast_transaction,
+                        self.txid, self.latest_tx)
 
         tx_broadcast = jm_single().config.get('POLICY', 'tx_broadcast')
         nick_to_use = None
@@ -977,15 +1058,17 @@ class Taker(object):
                       "methods supported. Reverting to self-broadcast.")
             pushed = self.push_ourselves()
         if not pushed:
-            self.on_finished_callback(False, fromtx=True)
+            finished_cb_res = self.on_finished_callback(False, fromtx=True)
+            if asyncio.iscoroutine(self.on_finished_callback):
+                await finished_cb_res
         else:
             if nick_to_use:
                 return (nick_to_use, self.latest_tx.serialize())
         #if push was not successful, return None
 
-    def self_sign_and_push(self):
-        self.self_sign()
-        return self.push()
+    async def self_sign_and_push(self):
+        await self.self_sign()
+        return await self.push()
 
     def tx_match(self, txd):
         # Takers process only in series, so this should not occur:
@@ -995,12 +1078,14 @@ class Taker(object):
             return False
         return True
 
-    def unconfirm_callback(self, txd, txid):
+    async def unconfirm_callback(self, txd, txid):
         if not self.tx_match(txd):
             return False
         jlog.info("Transaction seen on network, waiting for confirmation")
         #To allow client to mark transaction as "done" (e.g. by persisting state)
-        self.on_finished_callback(True, fromtx="unconfirmed")
+        finished_cb_res= self.on_finished_callback(True, fromtx="unconfirmed")
+        if asyncio.iscoroutine(self.on_finished_callback):
+            await finished_cb_res
         self.waiting_for_conf = True
         confirm_timeout_sec = float(jm_single().config.get(
             "TIMEOUT", "confirm_timeout_hours")) * 3600
@@ -1010,7 +1095,7 @@ class Taker(object):
                         "transaction with txid " + str(txid) + " not confirmed.")
         return True
 
-    def confirm_callback(self, txd, txid, confirmations):
+    async def confirm_callback(self, txd, txid, confirmations):
         if not self.tx_match(txd):
             return False
         self.waiting_for_conf = False
@@ -1022,13 +1107,16 @@ class Taker(object):
         jlog.debug("Confirmed callback in taker, confs: " + str(confirmations))
         fromtx=False if self.schedule_index + 1 == len(self.schedule) else True
         waittime = self.schedule[self.schedule_index][4]
-        self.on_finished_callback(True, fromtx=fromtx, waittime=waittime,
-                                  txdetails=(txd, txid))
+        finished_cb_res = self.on_finished_callback(
+            True, fromtx=fromtx, waittime=waittime, txdetails=(txd, txid))
+        if asyncio.iscoroutine(self.on_finished_callback):
+            await finished_cb_res
         return True
 
     def _is_our_input(self, tx_input):
         utxo = (tx_input.prevout.hash[::-1], tx_input.prevout.n)
         return utxo in self.input_utxos
+
 
 def round_to_significant_figures(d, sf):
     '''Rounding number d to sf significant figures in base 10'''

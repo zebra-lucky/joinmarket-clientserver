@@ -3,8 +3,13 @@
 # A script for noninteractively creating wallets.
 # The implementation is similar to wallet_generate_recover_bip39 in jmclient/wallet_utils.py
 
+import asyncio
 import os
 from optparse import OptionParser
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from pathlib import Path
 from jmclient import (
     load_program_config, add_base_options, SegwitWalletFidelityBonds, SegwitLegacyWallet,
@@ -14,7 +19,7 @@ from jmbase.support import get_log, jmprint
 
 log = get_log()
 
-def main():
+async def main():
     parser = OptionParser(
         usage='usage: %prog [options] wallet_file_name [password]',
         description='Create a wallet with the given wallet name and password.'
@@ -45,10 +50,19 @@ def main():
         # Fidelity Bonds are not available for segwit legacy wallets
         walletclass = SegwitLegacyWallet
     entropy = seed and SegwitLegacyWallet.entropy_from_mnemonic(seed)
-    wallet = create_wallet(wallet_path, password, wallet_utils.DEFAULT_MIXDEPTH, walletclass, entropy=entropy)
+    wallet = await create_wallet(
+        wallet_path, password, wallet_utils.DEFAULT_MIXDEPTH,
+        walletclass, entropy=entropy)
     jmprint("recovery_seed:{}"
          .format(wallet.get_mnemonic_words()[0]), "important")
     wallet.close()
 
+
+async def _main():
+    await main()
+
+
 if __name__ == "__main__":
-    main()
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

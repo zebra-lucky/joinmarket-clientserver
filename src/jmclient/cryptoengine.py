@@ -2,6 +2,8 @@
 from collections import OrderedDict
 import struct
 
+from bitcointx.core.script import SignatureHashSchnorr
+
 import jmbitcoin as btc
 from jmbase import bintohex
 from .configure import get_network, jm_single
@@ -208,6 +210,10 @@ class BTCEngine(object):
         raise NotImplementedError()
 
     @classmethod
+    def output_pubkey_to_script(cls, pubkey):
+        raise NotImplementedError()
+
+    @classmethod
     def privkey_to_address(cls, privkey):
         script = cls.key_to_script(privkey)
         return str(btc.CCoinAddress.from_scriptPubKey(script))
@@ -237,7 +243,17 @@ class BTCEngine(object):
         return script == pscript
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey, amount):
+    def output_pubkey_has_script(cls, pubkey, script):
+        stype = detect_script_type(script)
+        assert stype in ENGINES
+        engine = ENGINES[stype]
+        if engine is None:
+            raise EngineError
+        pscript = engine.output_pubkey_to_script(pubkey)
+        return script == pscript
+
+    @classmethod
+    async def sign_transaction(cls, tx, index, privkey, amount):
         raise NotImplementedError()
 
     @staticmethod
@@ -282,7 +298,7 @@ class BTC_P2PKH(BTCEngine):
         raise EngineError("Script code does not apply to legacy wallets")
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey, *args, **kwargs):
+    async def sign_transaction(cls, tx, index, privkey, *args, **kwargs):
         hashcode = kwargs.get('hashcode') or btc.SIGHASH_ALL
         return btc.sign(tx, index, privkey,
                         hashcode=hashcode, amount=None, native=False)
@@ -309,7 +325,7 @@ class BTC_P2SH_P2WPKH(BTCEngine):
         return btc.pubkey_to_p2pkh_script(pubkey, require_compressed=True)
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey, amount,
+    async def sign_transaction(cls, tx, index, privkey, amount,
                          hashcode=btc.SIGHASH_ALL, **kwargs):
         assert amount is not None
         a, b = btc.sign(tx, index, privkey,
@@ -346,7 +362,7 @@ class BTC_P2WPKH(BTCEngine):
         return btc.pubkey_to_p2pkh_script(pubkey, require_compressed=True)
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey, amount,
+    async def sign_transaction(cls, tx, index, privkey, amount,
                          hashcode=btc.SIGHASH_ALL, **kwargs):
         assert amount is not None
         return btc.sign(tx, index, privkey,
@@ -395,7 +411,7 @@ class BTC_Timelocked_P2WSH(BTCEngine):
         return btc.bin_to_b58check(priv, cls.WIF_PREFIX)
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey_locktime, amount,
+    async def sign_transaction(cls, tx, index, privkey_locktime, amount,
                          hashcode=btc.SIGHASH_ALL, **kwargs):
         assert amount is not None
         priv, locktime = privkey_locktime
@@ -428,7 +444,7 @@ class BTC_Watchonly_Timelocked_P2WSH(BTC_Timelocked_P2WSH):
         return ""
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey, amount,
+    async def sign_transaction(cls, tx, index, privkey, amount,
                          hashcode=btc.SIGHASH_ALL, **kwargs):
         raise RuntimeError("Cannot spend from watch-only wallets")
 
@@ -455,7 +471,7 @@ class BTC_Watchonly_P2WPKH(BTC_P2WPKH):
             master_key, BTC_Watchonly_Timelocked_P2WSH.get_watchonly_path(path))
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey, amount,
+    async def sign_transaction(cls, tx, index, privkey, amount,
                          hashcode=btc.SIGHASH_ALL, **kwargs):
         raise RuntimeError("Cannot spend from watch-only wallets")
 
@@ -471,18 +487,39 @@ class BTC_P2TR(BTCEngine):
         return btc.pubkey_to_p2tr_script(pubkey)
 
     @classmethod
+    def output_pubkey_to_script(cls, pubkey):
+        return btc.output_pubkey_to_p2tr_script(pubkey)
+
+    @classmethod
     def pubkey_to_script_code(cls, pubkey):
         raise NotImplementedError()
 
     @classmethod
-    def sign_transaction(cls, tx, index, privkey, amount,
+    async def sign_transaction(cls, tx, index, privkey, amount,
                          hashcode=btc.SIGHASH_ALL, **kwargs):
         assert amount is not None
-        assert 'spent_outputs' in kwargs
         spent_outputs = kwargs['spent_outputs']
         return btc.sign(tx, index, privkey,
                         hashcode=hashcode, amount=amount, native="p2tr",
                         spent_outputs=spent_outputs)
+
+
+class BTC_P2TR_FROST(BTC_P2TR):
+
+    @classmethod
+    async def sign_transaction(cls, tx, i, path, amount,
+                               hashcode=btc.SIGHASH_ALL, wallet=None,
+                               **kwargs):
+        spent_outputs = kwargs['spent_outputs']
+        sighash = SignatureHashSchnorr(tx, i, spent_outputs)
+        mixdepth, address_type, index = wallet.get_details(path)
+        sig, pubkey, tweaked_pubkey = await wallet.ipc_client.frost_sign(
+            mixdepth, address_type, index, sighash)
+        if not sig:
+            return None, "FROST signing failed"
+        sig, msg  = btc.add_frost_sig(tx, i, pubkey, sig, amount,
+                                      spent_outputs=spent_outputs)
+        return sig, msg
 
 
 ENGINES = {
@@ -494,4 +531,5 @@ ENGINES = {
     TYPE_WATCHONLY_P2WPKH: BTC_Watchonly_P2WPKH,
     TYPE_SEGWIT_WALLET_FIDELITY_BONDS: BTC_P2WPKH,
     TYPE_P2TR: BTC_P2TR,
+    TYPE_P2TR_FROST: BTC_P2TR_FROST,
 }

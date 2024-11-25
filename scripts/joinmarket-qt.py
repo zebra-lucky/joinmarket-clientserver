@@ -19,16 +19,19 @@ Some widgets copied and modified from https://github.com/spesmilo/electrum
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
+import asyncio
 import sys, datetime, os, logging
 import platform, json, threading, time
 from optparse import OptionParser
 from typing import Optional, Tuple
 
-from PySide2 import QtCore
+from PySide6 import QtCore
 
-from PySide2.QtGui import *
+from PySide6.QtGui import *
 
-from PySide2.QtWidgets import *
+from PySide6.QtWidgets import *
+
+import PySide6.QtAsyncio as QtAsyncio
 
 if platform.system() == 'Windows':
     MONOSPACE_FONT = 'Lucida Console'
@@ -53,7 +56,7 @@ qt5reactor.install()
 #Version of this Qt script specifically
 JM_GUI_VERSION = '33'
 
-from jmbase import get_log, stop_reactor, set_custom_stop_reactor
+from jmbase import get_log, stop_reactor, set_custom_stop_reactor, bintohex
 from jmbase.support import EXIT_FAILURE, utxo_to_utxostr,\
     hextobin, JM_CORE_VERSION
 import jmbitcoin as btc
@@ -61,9 +64,9 @@ from jmclient import load_program_config, get_network, update_persist_config,\
     open_test_wallet_maybe, get_wallet_path,\
     jm_single, validate_address, fidelity_bond_weighted_order_choose, Taker,\
     JMClientProtocolFactory, start_reactor, get_schedule, schedule_to_text,\
-    get_blockchain_interface_instance, direct_send, WalletService,\
-    RegtestBitcoinCoreInterface, tumbler_taker_finished_update,\
-    get_tumble_log, restart_wait, tumbler_filter_orders_callback,\
+    get_blockchain_interface_instance, direct_send, WalletService, \
+    RegtestBitcoinCoreInterface, tumbler_taker_finished_update, \
+    get_tumble_log, restart_wait, tumbler_filter_orders_callback, \
     wallet_generate_recover_bip39, wallet_display, get_utxos_enabled_disabled,\
     NO_ROUNDING, get_max_cj_fee_values, get_default_max_absolute_fee, \
     get_default_max_relative_fee, RetryableStorageError, add_base_options, \
@@ -465,7 +468,7 @@ class SpendTab(QWidget):
         current_path = os.path.dirname(os.path.realpath(__file__))
         firstarg = QFileDialog.getOpenFileName(self,
                                                'Choose Schedule File',
-                                               directory=current_path,
+                                               dir=current_path,
                                                options=QFileDialog.DontUseNativeDialog)
         #TODO validate the schedule
         log.debug('Looking for schedule in: ' + str(firstarg))
@@ -653,7 +656,8 @@ class SpendTab(QWidget):
             'the transaction after connecting, and shown the\n'
             'fees to pay; you can cancel at that point, or by \n'
              'pressing "Abort".')
-        self.startButton.clicked.connect(self.startSingle)
+        self.startButton.clicked.connect(
+            lambda: asyncio.create_task(self.startSingle()))
         self.abortButton = QPushButton('Abort')
         self.abortButton.setEnabled(False)
         buttons = QHBoxLayout()
@@ -780,7 +784,7 @@ class SpendTab(QWidget):
     def errorDirectSend(self, msg):
         JMQtMessageBox(self, msg, mbtype="warn", title="Error")
 
-    def startSingle(self):
+    async def startSingle(self):
         if not self.spendstate.runstate == 'ready':
             log.info("Cannot start join, already running.")
         if not self.validateSingleSend():
@@ -801,12 +805,15 @@ class SpendTab(QWidget):
             if len(self.changeInput.text().strip()) > 0:
                 custom_change = str(self.changeInput.text().strip())
             try:
-                txid = direct_send(mainWindow.wallet_service, mixdepth,
-                                   [(destaddr, amount)],
-                                   accept_callback=self.checkDirectSend,
-                                   info_callback=self.infoDirectSend,
-                                   error_callback=self.errorDirectSend,
-                                   custom_change_addr=custom_change)
+                tx = await direct_send(
+                    mainWindow.wallet_service, mixdepth,
+                    [(destaddr, amount)],
+                    accept_callback=self.checkDirectSend,
+                    info_callback=self.infoDirectSend,
+                    error_callback=self.errorDirectSend,
+                    return_transaction=True,
+                    custom_change_addr=custom_change)
+                txid = bintohex(tx.GetTxid()[::-1])
             except Exception as e:
                 JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
                 return
@@ -821,7 +828,7 @@ class SpendTab(QWidget):
                     if rtxid == txid:
                         return True
                     return False
-                mainWindow.wallet_service.active_txids.append(txid)
+                mainWindow.wallet_service.active_txs[txid] = tx
                 mainWindow.wallet_service.register_callbacks([qt_directsend_callback],
                                                     txid, cb_type="confirmed")
                 self.persistTxToHistory(destaddr, self.direct_send_amount, txid)
@@ -920,6 +927,7 @@ class SpendTab(QWidget):
                                          user_callback=self.getMaxCJFees)
         log.info("Using maximum coinjoin fee limits per maker of {:.4%}, {} "
                      "".format(maxcjfee[0], btc.amount_to_str(maxcjfee[1])))
+        wallet = mainWindow.wallet_service.wallet
         self.taker = Taker(mainWindow.wallet_service,
                            self.spendstate.loaded_schedule,
                            maxcjfee,
@@ -1348,21 +1356,23 @@ class CoinsTab(QWidget):
         self.cTW.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.cTW.header().setSectionResizeMode(QHeaderView.Interactive)
         self.cTW.header().setStretchLastSection(False)
-        self.cTW.on_update = self.updateUtxos
+        self.cTW.on_update = lambda: asyncio.create_task(self.updateUtxos())
 
         vbox = QVBoxLayout()
         self.setLayout(vbox)
         vbox.setContentsMargins(0,0,0,0)
         vbox.setSpacing(0)
         vbox.addWidget(self.cTW)
-        self.updateUtxos()
+
+    async def async_initUI(self):
+        await self.updateUtxos()
         self.show()
 
     def getHeaders(self):
         '''Function included in case dynamic in future'''
         return ['Txid:n', 'Amount in BTC', 'Address', 'Label']
 
-    def updateUtxos(self):
+    async def updateUtxos(self):
         """ Note that this refresh of the display only accesses in-process
         utxo database (no sync e.g.) so can be immediate.
         """
@@ -1378,7 +1388,8 @@ class CoinsTab(QWidget):
         utxos_enabled = {}
         utxos_disabled = {}
         for i in range(jm_single().config.getint("GUI", "max_mix_depth")):
-            utxos_e, utxos_d = get_utxos_enabled_disabled(mainWindow.wallet_service, i)
+            utxos_e, utxos_d = await get_utxos_enabled_disabled(
+                mainWindow.wallet_service, i)
             if utxos_e != {}:
                 utxos_enabled[i] = utxos_e
             if utxos_d != {}:
@@ -1407,7 +1418,8 @@ class CoinsTab(QWidget):
                         # keys must be utxo format else a coding error:
                         assert success
                         s = "{0:.08f}".format(v['value']/1e8)
-                        a = mainWindow.wallet_service.script_to_addr(v["script"])
+                        a = await mainWindow.wallet_service.script_to_addr(
+                            v["script"])
                         item = QTreeWidgetItem([t, s, a, v["label"]])
                         item.setFont(0, QFont(MONOSPACE_FONT))
                         #if rows[i][forchange][j][3] != 'new':
@@ -1415,12 +1427,12 @@ class CoinsTab(QWidget):
                         seq_item.addChild(item)
                     m_item.setExpanded(True)
 
-    def toggle_utxo_disable(self, txids, idxs):
+    async def toggle_utxo_disable(self, txids, idxs):
         for i in range(0, len(txids)):
             txid = txids[i]
             txid_bytes = hextobin(txid)
             mainWindow.wallet_service.toggle_disable_utxo(txid_bytes, idxs[i])
-        self.updateUtxos()
+        await self.updateUtxos()
 
     def create_menu(self, position):
         # all selected items
@@ -1445,8 +1457,9 @@ class CoinsTab(QWidget):
         txid, idx = item.text(0).split(":")
 
         menu = QMenu()
-        menu.addAction("Freeze/un-freeze utxo(s) (toggle)",
-                           lambda: self.toggle_utxo_disable(txids, idxs))
+        menu.addAction(
+            "Freeze/un-freeze utxo(s) (toggle)",
+            lambda: asyncio.create_task(self.toggle_utxo_disable(txids, idxs)))
         menu.addAction("Copy transaction id to clipboard",
                        lambda: app.clipboard().setText(txid))
         menu.exec_(self.cTW.viewport().mapToGlobal(position))
@@ -1469,7 +1482,7 @@ class JMWalletTab(QWidget):
         v.header().resizeSection(0, 400)    # size of "Address" column
         v.header().resizeSection(1, 130)    # size of "Index" column
         v.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        v.on_update = self.updateWalletInfo
+        v.on_update = lambda: asyncio.create_task(self.updateWalletInfo())
         v.hide()
         self.walletTree = v
         vbox = QVBoxLayout()
@@ -1480,7 +1493,9 @@ class JMWalletTab(QWidget):
         vbox.addWidget(v)
         buttons = QWidget()
         vbox.addWidget(buttons)
-        self.updateWalletInfo()
+
+    async def async_initUI(self):
+        await self.updateWalletInfo()
         self.show()
 
     def getHeaders(self):
@@ -1520,9 +1535,11 @@ class JMWalletTab(QWidget):
                            shortcut=QKeySequence(QKeySequence.Copy))
             menu.addAction("Show QR code",
                                lambda: self.openQRCodePopup(xpub, xpub))
-        menu.addAction("Refresh wallet",
-                       lambda: mainWindow.updateWalletInfo(None, "all"),
-                       shortcut=QKeySequence(QKeySequence.Refresh))
+        menu.addAction(
+            "Refresh wallet",
+            lambda: asyncio.create_task(
+                mainWindow.updateWalletInfo(None, "all")),
+            shortcut=QKeySequence(QKeySequence.Refresh))
 
         #TODO add more items to context menu
         menu.exec_(self.walletTree.viewport().mapToGlobal(position))
@@ -1544,7 +1561,7 @@ class JMWalletTab(QWidget):
             bip21_uri = bip21_uri.upper()
         self.openQRCodePopup(address, bip21_uri)
 
-    def updateWalletInfo(self, walletinfo=None):
+    async def updateWalletInfo(self, walletinfo=None):
         max_mixdepth_count = jm_single().config.getint("GUI", "max_mix_depth")
 
         previous_expand_states = []
@@ -1691,19 +1708,23 @@ class JMMainWindow(QMainWindow):
         openWalletAction = QAction('&Open...', self)
         openWalletAction.setStatusTip('Open JoinMarket wallet file')
         openWalletAction.setShortcut(QKeySequence.Open)
-        openWalletAction.triggered.connect(self.openWallet)
+        openWalletAction.triggered.connect(
+            lambda: asyncio.create_task(self.openWallet()))
         generateAction = QAction('&Generate...', self)
         generateAction.setStatusTip('Generate new wallet')
-        generateAction.triggered.connect(self.generateWallet)
+        generateAction.triggered.connect(
+            lambda: asyncio.create_task(self.generateWallet()))
         recoverAction = QAction('&Recover...', self)
         recoverAction.setStatusTip('Recover wallet from seed phrase')
-        recoverAction.triggered.connect(self.recoverWallet)
+        recoverAction.triggered.connect(
+            lambda: asyncio.create_task(self.recoverWallet()))
         showSeedAction = QAction('&Show seed', self)
         showSeedAction.setStatusTip('Show wallet seed phrase')
         showSeedAction.triggered.connect(self.showSeedDialog)
         exportPrivAction = QAction('&Export keys', self)
         exportPrivAction.setStatusTip('Export all private keys to a  file')
-        exportPrivAction.triggered.connect(self.exportPrivkeysJson)
+        exportPrivAction.triggered.connect(
+            lambda: asyncio.create_task(self.exportPrivkeysJson()))
         changePassAction = QAction('&Change passphrase...', self)
         changePassAction.setStatusTip('Change wallet encryption passphrase')
         changePassAction.triggered.connect(self.changePassphrase)
@@ -1746,7 +1767,7 @@ class JMMainWindow(QMainWindow):
         self.receiver_bip78_dialog = ReceiveBIP78Dialog(
             self.startReceiver, self.stopReceiver)
 
-    def startReceiver(self):
+    async def startReceiver(self):
         """ Initializes BIP78 Receiving object and
         starts the setup of onion service to serve
         request.
@@ -1773,6 +1794,8 @@ class JMMainWindow(QMainWindow):
             uri_created_callback=self.receiver_bip78_dialog.update_uri,
             shutdown_callback=self.receiver_bip78_dialog.process_complete,
             mode="gui")
+        await self.backend_receiver.async_init(self.wallet_service, mixdepth,
+                                               amount, mode="gui")
         if not self.bip78daemon:
             #First run means we need to start: create daemon;
             # the client and its connection are created in the .initiate()
@@ -1785,7 +1808,7 @@ class JMMainWindow(QMainWindow):
                        jm_coinjoin=False, bip78=True, daemon=True,
                        gui=True, rs=False)
                 self.bip78daemon = True
-        self.backend_receiver.initiate()
+        await self.backend_receiver.initiate()
         return True
 
     def stopReceiver(self):
@@ -1817,7 +1840,7 @@ class JMMainWindow(QMainWindow):
         lyt.addWidget(btnbox)
         msgbox.exec_()
 
-    def exportPrivkeysJson(self):
+    async def exportPrivkeysJson(self):
         if not self.wallet_service:
             JMQtMessageBox(self,
                            "No wallet loaded.",
@@ -1848,7 +1871,7 @@ class JMMainWindow(QMainWindow):
         #option for anyone with gaplimit troubles, although
         #that is a complete mess for a user, mostly changing
         #the gaplimit in the Settings tab should address it.
-        rows = get_wallet_printout(self.wallet_service)
+        rows = await get_wallet_printout(self.wallet_service)
         addresses = []
         for forchange in rows[0]:
             for mixdepth in forchange:
@@ -1978,9 +2001,9 @@ class JMMainWindow(QMainWindow):
                        title="Restart")
         self.close()
 
-    def recoverWallet(self):
+    async def recoverWallet(self):
         try:
-            success = wallet_generate_recover_bip39(
+            success = await wallet_generate_recover_bip39(
                 "recover", os.path.join(jm_single().datadir, 'wallets'),
                 "wallet.jmdat",
                 display_seed_callback=None,
@@ -2002,9 +2025,9 @@ class JMMainWindow(QMainWindow):
 
         JMQtMessageBox(self, 'Wallet saved to ' + self.walletname,
                                    title="Wallet created")
-        self.initWallet(seed=self.walletname)
+        await self.initWallet(seed=self.walletname)
 
-    def openWallet(self):
+    async def openWallet(self):
         wallet_loaded = False
         error_text = ""
 
@@ -2019,15 +2042,16 @@ class JMMainWindow(QMainWindow):
                 wallet_path = wallet_file_text
                 if not os.path.isabs(wallet_path):
                     wallet_path = os.path.join(jm_single().datadir, 'wallets', wallet_path)
-
                 try:
-                    wallet_loaded = mainWindow.loadWalletFromBlockchain(wallet_path, openWalletDialog.passphraseEdit.text(), rethrow=True)
+                    wallet_loaded = await mainWindow.loadWalletFromBlockchain(
+                        wallet_path, openWalletDialog.passphraseEdit.text(),
+                        rethrow=True)
                 except Exception as e:
                     error_text = str(e)
             else:
                 break
 
-    def selectWallet(self, testnet_seed=None):
+    async def selectWallet(self, testnet_seed=None):
         if jm_single().config.get("BLOCKCHAIN", "blockchain_source") != "regtest":
             # guaranteed to exist as load_program_config was called on startup:
             wallets_path = os.path.join(jm_single().datadir, 'wallets')
@@ -2049,7 +2073,8 @@ class JMMainWindow(QMainWindow):
                     return
                 pwd = str(text).strip()
                 try:
-                    decrypted = self.loadWalletFromBlockchain(firstarg[0], pwd)
+                    decrypted = await self.loadWalletFromBlockchain(
+                        firstarg[0], pwd)
                 except Exception as e:
                     JMQtMessageBox(self,
                                str(e),
@@ -2071,15 +2096,17 @@ class JMMainWindow(QMainWindow):
             firstarg = str(testnet_seed)
             pwd = None
             #ignore return value as there is no decryption failure possible
-            self.loadWalletFromBlockchain(firstarg, pwd)
+            await self.loadWalletFromBlockchain(firstarg, pwd)
 
-    def loadWalletFromBlockchain(self, firstarg=None, pwd=None, rethrow=False):
+    async def loadWalletFromBlockchain(self, firstarg=None,
+                                       pwd=None, rethrow=False):
         if firstarg:
             wallet_path = get_wallet_path(str(firstarg), None)
             try:
-                wallet = open_test_wallet_maybe(wallet_path, str(firstarg),
-                        None, ask_for_password=False, password=pwd.encode('utf-8') if pwd else None,
-                        gap_limit=jm_single().config.getint("GUI", "gaplimit"))
+                wallet = await open_test_wallet_maybe(
+                    wallet_path, str(firstarg), None, ask_for_password=False,
+                    password=pwd.encode('utf-8') if pwd else None,
+                    gap_limit=jm_single().config.getint("GUI", "gaplimit"))
             except RetryableStorageError as e:
                 if rethrow:
                     raise e
@@ -2112,8 +2139,8 @@ class JMMainWindow(QMainWindow):
             return "error"
 
         if jm_single().bc_interface is None:
-            self.centralWidget().widget(0).updateWalletInfo(
-                get_wallet_printout(self.wallet_service))
+            await self.centralWidget().widget(0).updateWalletInfo(
+                await get_wallet_printout(self.wallet_service))
             return True
 
         # add information callbacks:
@@ -2121,13 +2148,14 @@ class JMMainWindow(QMainWindow):
         self.wallet_service.autofreeze_warning_cb = self.autofreeze_warning_cb
         self.wallet_service.startService()
         self.syncmsg = ""
-        self.walletRefresh = task.LoopingCall(self.updateWalletInfo, None, None)
+        self.walletRefresh = task.LoopingCall(
+            self.updateWalletInfo, None, None)
         self.walletRefresh.start(5.0)
 
         self.statusBar().showMessage("Reading wallet from blockchain ...")
         return True
 
-    def updateWalletInfo(self, txd, txid):
+    async def updateWalletInfo(self, txd, txid):
         """ TODO: see use of `jmclient.BaseWallet.process_new_tx` in
         `jmclient.WalletService.transaction_monitor`;
         we could similarly find the exact utxos to update in the view,
@@ -2158,7 +2186,8 @@ class JMMainWindow(QMainWindow):
                     [self.updateWalletInfo], None, "all")
                 self.update_registered = True
             try:
-                t.updateWalletInfo(get_wallet_printout(self.wallet_service))
+                await t.updateWalletInfo(
+                    await get_wallet_printout(self.wallet_service))
             except Exception:
                 # this is very likely to happen in case Core RPC connection goes
                 # down (but, order of events means it is not deterministic).
@@ -2170,13 +2199,13 @@ class JMMainWindow(QMainWindow):
             self.syncmsg = newsyncmsg
             self.statusBar().showMessage(self.syncmsg)
 
-    def generateWallet(self):
+    async def generateWallet(self):
         log.debug('generating wallet')
         if jm_single().config.get("BLOCKCHAIN", "blockchain_source") == "regtest":
             seed = self.getTestnetSeed()
-            self.selectWallet(testnet_seed=seed)
+            await self.selectWallet(testnet_seed=seed)
         else:
-            self.initWallet()
+            await self.initWallet()
 
     def checkPassphrase(self):
         match = False
@@ -2299,7 +2328,7 @@ class JMMainWindow(QMainWindow):
             return None
         return str(mnemonic_extension)
 
-    def initWallet(self, seed=None):
+    async def initWallet(self, seed=None):
         '''Creates a new wallet if seed not provided.
         Initializes by syncing.
         '''
@@ -2307,7 +2336,7 @@ class JMMainWindow(QMainWindow):
             try:
                 # guaranteed to exist as load_program_config was called on startup:
                 wallets_path = os.path.join(jm_single().datadir, 'wallets')
-                success = wallet_generate_recover_bip39(
+                success = await wallet_generate_recover_bip39(
                     "generate", wallets_path, "wallet.jmdat",
                     display_seed_callback=self.displayWords,
                     enter_seed_callback=None,
@@ -2327,9 +2356,10 @@ class JMMainWindow(QMainWindow):
 
             JMQtMessageBox(self, 'Wallet saved to ' + self.walletname,
                            title="Wallet created")
-        self.loadWalletFromBlockchain(self.walletname, pwd=self.textpassword)
+        await self.loadWalletFromBlockchain(
+            self.walletname, pwd=self.textpassword)
 
-def get_wallet_printout(wallet_service):
+async def get_wallet_printout(wallet_service):
     """Given a WalletService object, retrieve the list of
     addresses and corresponding balances to be displayed.
     We retrieve a WalletView abstraction, and iterate over
@@ -2341,7 +2371,7 @@ def get_wallet_printout(wallet_service):
     xpubs: [[xpubext, xpubint], ...]
     Bitcoin amounts returned are in btc, not satoshis
     """
-    walletview = wallet_display(wallet_service, False, serialized=False)
+    walletview = await wallet_display(wallet_service, False, serialized=False)
     rows = []
     mbalances = []
     xpubs = []
@@ -2415,14 +2445,14 @@ update_config_for_gui()
 
 check_and_start_tor()
 
-def onTabChange(i):
+async def onTabChange(i, tabWidget):
     """ Respond to change of tab.
     """
     # TODO: hardcoded literal;
     # note that this is needed for an auto-update
     # of utxos on the Coins tab only atm.
     if i == 2:
-        tabWidget.widget(2).updateUtxos()
+        await tabWidget.widget(2).updateUtxos()
 
 #to allow testing of confirm/unconfirm callback for multiple txs
 if isinstance(jm_single().bc_interface, RegtestBitcoinCoreInterface):
@@ -2439,43 +2469,52 @@ tumble_log = get_tumble_log(logsdir)
 ignored_makers = []
 appWindowTitle = 'JoinMarketQt'
 from twisted.internet import reactor
-mainWindow = JMMainWindow(reactor)
-tabWidget = QTabWidget(mainWindow)
-tabWidget.addTab(JMWalletTab(), "JM Wallet")
-tabWidget.addTab(SpendTab(), "Coinjoins")
-tabWidget.addTab(CoinsTab(), "Coins")
-tabWidget.addTab(TxHistoryTab(), "Tx History")
-settingsTab = SettingsTab()
-tabWidget.addTab(settingsTab, "Settings")
-
-mainWindow.resize(600, 500)
-if get_network() == 'testnet':
-    suffix = ' - Testnet'
-elif get_network() == 'signet':
-    suffix = ' - Signet'
-else:
-    suffix = ''
-mainWindow.setWindowTitle(appWindowTitle + suffix)
-tabWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-mainWindow.setCentralWidget(tabWidget)
-tabWidget.currentChanged.connect(onTabChange)
-
-mainWindow.show()
 reactor.runReturn()
+mainWindow = JMMainWindow(reactor)
 
-# Qt does not stop automatically when we stop the qt5reactor, and
-# also we don't want to close without warning the user;
-# patch our stop_reactor method to include the necessary cleanup:
-def qt_shutdown():
-    # checking ensures we only fire the close
-    # event once even if stop_reactor is called
-    # multiple times (which it often is):
-    if mainWindow.isVisible():
-        mainWindow.unconditional_shutdown = True
-        mainWindow.close()
-set_custom_stop_reactor(qt_shutdown)
 
-# Upon launching the app, ask the user to choose a wallet to open
-mainWindow.openWallet()
+async def main():
+    tabWidget = QTabWidget(mainWindow)
+    jm_wallet_tab = JMWalletTab()
+    await jm_wallet_tab.async_initUI()
+    tabWidget.addTab(jm_wallet_tab, "JM Wallet")
+    tabWidget.addTab(SpendTab(), "Coinjoins")
+    coins_tab = CoinsTab()
+    await coins_tab.async_initUI()
+    tabWidget.addTab(coins_tab, "Coins")
+    tabWidget.addTab(TxHistoryTab(), "Tx History")
+    settingsTab = SettingsTab()
+    tabWidget.addTab(settingsTab, "Settings")
 
-sys.exit(app.exec_())
+    mainWindow.resize(600, 500)
+    if get_network() == 'testnet':
+        suffix = ' - Testnet'
+    elif get_network() == 'signet':
+        suffix = ' - Signet'
+    else:
+        suffix = ''
+    mainWindow.setWindowTitle(appWindowTitle + suffix)
+    tabWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    mainWindow.setCentralWidget(tabWidget)
+    tabWidget.currentChanged.connect(
+        lambda i: asyncio.create_task(onTabChange(i, tabWidget)))
+
+    mainWindow.show()
+
+    # Qt does not stop automatically when we stop the qt5reactor, and
+    # also we don't want to close without warning the user;
+    # patch our stop_reactor method to include the necessary cleanup:
+    def qt_shutdown():
+        # checking ensures we only fire the close
+        # event once even if stop_reactor is called
+        # multiple times (which it often is):
+        if mainWindow.isVisible():
+            mainWindow.unconditional_shutdown = True
+            mainWindow.close()
+    set_custom_stop_reactor(qt_shutdown)
+
+    # Upon launching the app, ask the user to choose a wallet to open
+    await mainWindow.openWallet()
+
+QtAsyncio.run(coro=main(), handle_sigint=True, debug=True)
+# sys.exit(app.exec_())  # FIXME?

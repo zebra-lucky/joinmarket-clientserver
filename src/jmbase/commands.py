@@ -78,6 +78,90 @@ class JMShutdown(JMCommand):
     """
     arguments = []
 
+
+"""Messages used by DKG parties"""
+
+class JMDKGInit(JMCommand):
+    arguments = [
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+    ]
+
+class JMDKGPMsg1(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+        (b'pmsg1', Unicode()),
+    ]
+
+class JMDKGPMsg2(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'pmsg2', Unicode()),
+    ]
+
+class JMDKGCMsg1(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'cmsg1', Unicode()),
+    ]
+
+class JMDKGCMsg2(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'cmsg2', Unicode()),
+        (b'ext_recovery', Unicode()),
+    ]
+
+class JMDKGFinalized(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+    ]
+
+
+"""Messages used by FROST parties"""
+
+class JMFROSTInit(JMCommand):
+    arguments = [
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+    ]
+
+class JMFROSTRound1(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+        (b'pub_nonce', Unicode()),
+    ]
+
+class JMFROSTAgg1(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'nonce_agg', Unicode()),
+        (b'dkg_session_id', Unicode()),
+        (b'ids', Unicode()),
+        (b'msg', Unicode()),
+    ]
+
+class JMFROSTRound2(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'partial_sig', Unicode()),
+    ]
+
+
 """TAKER specific commands
 """
 
@@ -192,6 +276,92 @@ class JMRequestMsgSigVerify(JMCommand):
                  (b'hashlen', Integer()),
                  (b'max_encoded', Integer()),
                  (b'hostid', Unicode())]
+
+
+"""Messages used by DKG parties"""
+
+class JMDKGInitSeen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+    ]
+
+class JMDKGPMsg1Seen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+        (b'pmsg1', Unicode()),
+    ]
+
+class JMDKGPMsg2Seen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'pmsg2', Unicode()),
+    ]
+
+class JMDKGFinalizedSeen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+    ]
+
+class JMDKGCMsg1Seen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'cmsg1', Unicode()),
+    ]
+
+class JMDKGCMsg2Seen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'cmsg2', Unicode()),
+        (b'ext_recovery', Unicode()),
+    ]
+
+
+"""Messages used by FROST parties"""
+
+class JMFROSTInitSeen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+    ]
+
+class JMFROSTRound1Seen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'session_id', Unicode()),
+        (b'sig', Unicode()),
+        (b'pub_nonce', Unicode()),
+    ]
+
+class JMFROSTAgg1Seen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'nonce_agg', Unicode()),
+        (b'dkg_session_id', Unicode()),
+        (b'ids', Unicode()),
+        (b'msg', Unicode()),
+    ]
+
+class JMFROSTRound2Seen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'session_id', Unicode()),
+        (b'partial_sig', Unicode()),
+    ]
+
 
 """ TAKER-specific commands
 """

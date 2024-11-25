@@ -24,8 +24,13 @@ in Bitcoin Core in order to get full transactions, since it
 parses the raw blocks.
 """
 
+import asyncio
 import sys
 from optparse import OptionParser
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import bintohex, EXIT_ARGERROR, jmprint
 import jmbitcoin as btc
 from jmclient import (jm_single, add_base_options, load_program_config,
@@ -49,7 +54,7 @@ def write_candidate_to_file(ttype, candidate, blocknum, unspents, filename):
              "found in the above.\n")
         f.write("The unspent indices are: " + " ".join(
             (str(u) for u in unspents)) + "\n")
-def main():
+async def main():
     parser = OptionParser(
         usage=
         'usage: %prog [options] startingblock [endingblock]',
@@ -111,6 +116,14 @@ def main():
                     write_candidate_to_file("Joinmarket coinjoin", t, b,
                                     unspents, options.candidate_file_name)
         log.info("Finished processing block: {}".format(b))
-if __name__ == "__main__":
-    main()
+
+
+async def _main():
+    await main()
     jmprint('done', "success")
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

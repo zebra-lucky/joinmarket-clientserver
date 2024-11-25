@@ -5,8 +5,13 @@ for a Joinmarket user, although of course it may be useful
 for other reasons).
 """
 
+import asyncio
 from optparse import OptionParser
 import jmbitcoin as btc
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import (get_log, jmprint, bintohex, utxostr_to_utxo,
                     IndentedHelpFormatterWithNL, cli_prompt_user_yesno)
 from jmclient import load_program_config, estimate_tx_fee, jm_single,\
@@ -64,7 +69,7 @@ p2wpkh ('bc1') addresses.
 utxos - set segwit=False in the POLICY section of
 joinmarket.cfg for the former."""
 
-def main():
+async def main():
     parser = OptionParser(
         usage=
         'usage: %prog [options] utxo destaddr1 destaddr2 ..',
@@ -74,7 +79,7 @@ def main():
         '--utxo-address-type',
         action='store',
         dest='utxo_address_type',
-        help=('type of address of coin being spent - one of "p2pkh", "p2wpkh", "p2sh-p2wpkh". '
+        help=('type of address of coin being spent - one of "p2pkh", "p2wpkh", "p2sh-p2wpkh", "p2tr". '
         'No other scriptpubkey types (e.g. multisig) are supported. If not set, we default '
         'to what is in joinmarket.cfg.'),
         default=""
@@ -98,7 +103,9 @@ def main():
     if not success:
         quit(parser, "Failed to load utxo from string: " + utxo)
     if options.utxo_address_type == "":
-        if jm_single().config.get("POLICY", "segwit") == "false":
+        if jm_single().config.get("POLICY", "taproot") == "true":
+            utxo_address_type = "p2tr"
+        elif jm_single().config.get("POLICY", "segwit") == "false":
             utxo_address_type = "p2pkh"
         elif jm_single().config.get("POLICY", "native") == "false":
             utxo_address_type = "p2sh-p2wpkh"
@@ -117,6 +124,13 @@ def main():
         return
     jm_single().bc_interface.pushtx(txsigned.serialize())
 
-if __name__ == "__main__":
-    main()
+
+async def _main():
+    await main()
     jmprint('done', "success")
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

@@ -19,9 +19,14 @@ this is a simulated coinjoin, it may be deducible that it is only really
 a *signalling* fake coinjoin, so it is better not to violate the principle.
 """
 
+import asyncio
 import sys
 import random
 from optparse import OptionParser
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import bintohex, jmprint, EXIT_ARGERROR, EXIT_FAILURE
 import jmbitcoin as btc
 from jmclient import (jm_single, load_program_config, check_regtest,
@@ -32,7 +37,7 @@ from jmclient.configure import get_log
 
 log = get_log()
 
-def main():
+async def main():
     parser = OptionParser(
         usage=
         'usage: %prog [options] walletname',
@@ -96,7 +101,7 @@ def main():
         jm_single().config.set("POLICY", "tx_fees", str(options.txfee))
     max_mix_depth = max([options.mixdepth, options.amtmixdepths - 1])
     wallet_path = get_wallet_path(wallet_name, None)
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
         wallet_path, wallet_name, max_mix_depth,
         wallet_password_stdin=options.wallet_password_stdin,
         gap_limit=options.gaplimit)
@@ -117,7 +122,8 @@ def main():
     # *second* largest utxo as the receiver utxo; this ensures that we
     # have enough for the proposer to cover. We consume utxos greedily,
     # meaning we'll at least some of the time, be consolidating.
-    utxo_dict = wallet_service.get_utxos_by_mixdepth()[options.mixdepth]
+    _utxos = await wallet_service.get_utxos_by_mixdepth()
+    utxo_dict = _utxos[options.mixdepth]
     if not len(utxo_dict) >= 2:
         log.error("Cannot create fake SNICKER tx without at least two utxos, quitting")
         sys.exit(EXIT_ARGERROR)
@@ -158,8 +164,10 @@ def main():
     # (not only in trivial output pattern, but also in subset-sum), there
     # is little advantage in making it use different output mixdepths, so
     # here to prevent fragmentation, everything is kept in the same mixdepth.
-    receiver_addr, proposer_addr, change_addr = (wallet_service.script_to_addr(
-        wallet_service.get_new_script(options.mixdepth, 1)) for _ in range(3))
+    receiver_addr, proposer_addr, change_addr = (
+            await wallet_service.script_to_addr(
+                await wallet_service.get_new_script(options.mixdepth, 1))
+            for _ in range(3))
     # persist index update:
     wallet_service.save_wallet()
     outputs = btc.construct_snicker_outputs(
@@ -188,7 +196,7 @@ def main():
         script = utxo_dict[utxo]['script']
         amount = utxo_dict[utxo]['value']
         our_inputs[index] = (script, amount)    
-    success, msg = wallet_service.sign_tx(tx, our_inputs)
+    success, msg = await wallet_service.sign_tx(tx, our_inputs)
     if not success:
         log.error("Failed to sign transaction: " + msg)
         sys.exit(EXIT_FAILURE)
@@ -205,6 +213,13 @@ def main():
     log.info("Successfully broadcast fake SNICKER coinjoin: " +\
               bintohex(tx.GetTxid()[::-1]))
 
-if __name__ == "__main__":
-    main()
+
+async def _main():
+    await main()
     jmprint('done', "success")
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

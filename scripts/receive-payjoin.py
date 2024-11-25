@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 
+import asyncio
 from optparse import OptionParser
 
 import sys
+
+import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+
 from jmbase import get_log, jmprint
 from jmclient import jm_single, load_program_config, \
     WalletService, open_test_wallet_maybe, get_wallet_path, check_regtest, \
@@ -13,7 +17,7 @@ from jmbase.support import EXIT_FAILURE, EXIT_ARGERROR
 from jmbitcoin import amount_to_sat
 jlog = get_log()
 
-def receive_payjoin_main():
+async def receive_payjoin_main():
     parser = OptionParser(usage='usage: %prog [options] [wallet file] [amount-to-receive]')
     add_base_options(parser)
     parser.add_option('-P', '--hs-port', action='store', type='int',
@@ -55,7 +59,7 @@ def receive_payjoin_main():
 
     wallet_path = get_wallet_path(wallet_name, None)
     max_mix_depth = max([options.mixdepth, options.amtmixdepths - 1])
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
         wallet_path, wallet_name, max_mix_depth,
         wallet_password_stdin=options.wallet_password_stdin,
         gap_limit=options.gaplimit)
@@ -72,6 +76,8 @@ def receive_payjoin_main():
         sys.exit(EXIT_ARGERROR)
     receiver_manager = JMBIP78ReceiverManager(wallet_service, options.mixdepth,
                                     bip78_amount, options.hsport)
+    await receiver_manager.async_init(wallet_service, options.mixdepth,
+                                      bip78_amount)
     reactor.callWhenRunning(receiver_manager.initiate)
     nodaemon = jm_single().config.getint("DAEMON", "no_daemon")
     daemon = True if nodaemon == 1 else False

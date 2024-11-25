@@ -1,14 +1,15 @@
 #! /usr/bin/env python
 
+import asyncio
 import collections
 import itertools
 import time
-import sys
 from typing import Dict, List, Optional, Set, Tuple
 from decimal import Decimal
 from copy import deepcopy
 from twisted.internet import reactor
 from twisted.internet import task
+from twisted.internet.defer import Deferred
 from twisted.application.service import Service
 from numbers import Integral
 import jmbitcoin as btc
@@ -16,9 +17,10 @@ from jmclient.configure import jm_single, get_log
 from jmclient.output import fmt_tx_data
 from jmclient.blockchaininterface import (INF_HEIGHT, BitcoinCoreInterface,
     BitcoinCoreNoHistoryInterface)
-from jmclient.wallet import FidelityBondMixin, BaseWallet, TaprootWallet
+from jmclient.wallet import (FidelityBondMixin, BaseWallet, TaprootWallet,
+                             FrostWallet)
 from jmbase import (stop_reactor, hextobin, utxo_to_utxostr,
-                    jmprint, EXIT_SUCCESS, EXIT_FAILURE)
+                    twisted_sys_exit, jmprint, EXIT_SUCCESS, EXIT_FAILURE)
 from .descriptor import descsum_create
 
 """Wallet service
@@ -43,9 +45,10 @@ class WalletService(Service):
         # the JM wallet object.
         self.bci = jm_single().bc_interface
 
-        # main loop used to check for transactions, instantiated
+        # main task used to check for transactions, instantiated
         # after wallet is synced:
-        self.monitor_loop = None
+        self.service_task = None
+        self.monitor_task = None
         self.wallet = wallet
         self.synced = False
 
@@ -139,7 +142,7 @@ class WalletService(Service):
         Here wallet sync.
         """
         super().startService()
-        self.request_sync_wallet()
+        self.service_task = asyncio.create_task(self.request_sync_wallet())
 
     def stopService(self):
         """ Encapsulates shut down actions.
@@ -147,8 +150,12 @@ class WalletService(Service):
         should *not* be restarted, instead a new
         WalletService instance should be created.
         """
-        if self.monitor_loop and self.monitor_loop.running:
-            self.monitor_loop.stop()
+        if self.monitor_task and not self.monitor_task.done():
+            self.monitor_task.cancel()
+        if self.service_task and not self.service_task.done():
+            self.service_task.cancel()
+        self.monitor_task = None
+        self.service_task = None
         self.wallet.close()
         super().stopService()
 
@@ -167,13 +174,13 @@ class WalletService(Service):
         """
         self.restart_callback = callback
 
-    def request_sync_wallet(self):
+    async def request_sync_wallet(self):
         """ Ensures wallet sync is complete
         before the main event loop starts.
         """
         if self.bci is not None:
-            d = task.deferLater(reactor, 0.0, self.sync_wallet)
-            d.addCallback(self.start_wallet_monitoring)
+            syncresult = await self.sync_wallet()
+            await self.start_wallet_monitoring(syncresult)
 
     def register_callbacks(self, callbacks, txinfo, cb_type="all"):
         """ Register callbacks that will be called by the
@@ -214,7 +221,7 @@ class WalletService(Service):
             assert False, "Invalid argument: " + cb_type
 
 
-    def start_wallet_monitoring(self, syncresult):
+    async def start_wallet_monitoring(self, syncresult):
         """ Once the initialization of the service
         (currently, means: wallet sync) is complete,
         we start the main monitoring jobs of the
@@ -230,9 +237,16 @@ class WalletService(Service):
                 reactor.stop()
             return
         jlog.info("Starting transaction monitor in walletservice")
-        self.monitor_loop = task.LoopingCall(
-            self.transaction_monitor)
-        self.monitor_loop.start(5.0)
+
+        async def monitor_task():
+            while True:
+                try:
+                    await self.transaction_monitor()
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    break
+
+        self.monitor_task = asyncio.create_task(monitor_task())
 
     def import_non_wallet_address(self, address):
         """ Used for keeping track of transactions which
@@ -309,7 +323,7 @@ class WalletService(Service):
                     last = False
             yield tx
 
-    def transaction_monitor(self):
+    async def transaction_monitor(self):
         """Keeps track of any changes in the wallet (new transactions).
         Intended to be run as a twisted task.LoopingCall so that this
         Service is constantly in near-realtime sync with the blockchain.
@@ -354,14 +368,15 @@ class WalletService(Service):
                     self.bci.get_deser_from_gettransaction(res)
             if txd is None:
                 continue
-            removed_utxos, added_utxos = self.wallet.process_new_tx(txd, height)
+            removed_utxos, added_utxos = await self.wallet.process_new_tx(
+                txd, height)
             if txid not in self.processed_txids:
                 # apply checks to disable/freeze utxos to reused addrs if needed:
                 self.check_for_reuse(added_utxos)
                 # TODO note that this log message will be missed if confirmation
                 # is absurdly fast, this is considered acceptable compared with
                 # additional complexity.
-                self.log_new_tx(removed_utxos, added_utxos, txid)
+                await self.log_new_tx(removed_utxos, added_utxos, txid)
                 self.processed_txids.add(txid)
 
             # first fire 'all' type callbacks, irrespective of if the
@@ -375,7 +390,10 @@ class WalletService(Service):
                 for f in self.callbacks["all"]:
                     # note we need no return value as we will never
                     # remove these from the list
-                    f(txd, txid)
+                    if asyncio.iscoroutine(f):
+                        await f(txd, txid)
+                    else:
+                        f(txd, txid)
 
             # txid is not always available at the time of callback registration.
             # Migrate any callbacks registered under the provisional key, and
@@ -401,9 +419,14 @@ class WalletService(Service):
             if len(added_utxos) > 0 or len(removed_utxos) > 0 \
                     or txid in self.active_txs:
                 if confs == 0:
-                    callbacks = [f for f in
-                            self.callbacks["unconfirmed"].pop(txid, [])
-                            if not f(txd, txid)]
+                    callbacks = []
+                    for f in self.callbacks["unconfirmed"].pop(txid, []):
+                        if asyncio.iscoroutine(f):
+                            if not await f(txd, txid):
+                                callbacks.append(f)
+                        else:
+                            if not f(txd, txid):
+                                callbacks.append(f)
                     if callbacks:
                         self.callbacks["unconfirmed"][txid] = callbacks
                     else:
@@ -414,9 +437,14 @@ class WalletService(Service):
                     # the height of the utxo in UtxoManager
                     self.active_txs[txid] = txd
                 elif confs > 0:
-                    callbacks = [f for f in
-                            self.callbacks["confirmed"].pop(txid, [])
-                            if not f(txd, txid, confs)]
+                    callbacks = []
+                    for f in self.callbacks["confirmed"].pop(txid, []):
+                        if asyncio.iscoroutine(f):
+                            if not await f(txd, txid, confs):
+                                callbacks.append(f)
+                        else:
+                            if not f(txd, txid, confs):
+                                callbacks.append(f)
                     if callbacks:
                         self.callbacks["confirmed"][txid] = callbacks
                     else:
@@ -458,25 +486,26 @@ class WalletService(Service):
             # processed and so do nothing.
         return True
 
-    def log_new_tx(self, removed_utxos, added_utxos, txid):
+    async def log_new_tx(self, removed_utxos, added_utxos, txid):
         """ Changes to the wallet are logged at INFO level by
         the WalletService.
         """
-        def report_changed(x, utxos):
+        async def report_changed(x, utxos):
             if len(utxos.keys()) > 0:
                 jlog.info(x + ' utxos=\n{}'.format('\n'.join(
-                    '{} - {}'.format(utxo_to_utxostr(u)[1],
-                        fmt_tx_data(tx_data, self)) for u,
-                    tx_data in utxos.items())))
+                    ['{} - {}'.format(
+                         utxo_to_utxostr(u)[1],
+                         await fmt_tx_data(tx_data, self))
+                     for u, tx_data in utxos.items()])))
 
-        report_changed("Removed", removed_utxos)
-        report_changed("Added", added_utxos)
+        await report_changed("Removed", removed_utxos)
+        await report_changed("Added", added_utxos)
 
 
         """ Wallet syncing code
         """
 
-    def sync_wallet(self, fast=True):
+    async def sync_wallet(self, fast=True):
         """ Syncs wallet; note that if slow sync
         requires multiple rounds this must be called
         until self.synced is True.
@@ -489,9 +518,9 @@ class WalletService(Service):
         if self.synced:
             return True
         if fast:
-            self.sync_wallet_fast()
+            await self.sync_wallet_fast()
         else:
-            self.sync_addresses()
+            await self.sync_addresses()
             self.sync_unspent()
         # Don't attempt updates on transactions that existed
         # before startup
@@ -502,22 +531,22 @@ class WalletService(Service):
             self.bci.set_wallet_no_history(self.wallet)
         return self.synced
 
-    def resync_wallet(self, fast=True):
+    async def resync_wallet(self, fast=True):
         """ The self.synced state is generally
         updated to True, once, at the start of
         a run of a particular program. Here we
         can manually force re-sync.
         """
         self.synced = False
-        self.sync_wallet(fast=fast)
+        await self.sync_wallet(fast=fast)
 
-    def sync_wallet_fast(self):
+    async def sync_wallet_fast(self):
         """Exploits the fact that given an index_cache,
         all addresses necessary should be imported, so we
         can just list all used addresses to find the right
         index values.
         """
-        self.sync_addresses_fast()
+        await self.sync_addresses_fast()
         self.sync_unspent()
 
     def has_address_been_used(self, address):
@@ -545,7 +574,7 @@ class WalletService(Service):
             used_addresses.add(addr_info[0])
         self.used_addresses = used_addresses
 
-    def sync_addresses_fast(self):
+    async def sync_addresses_fast(self):
         """Locates all used addresses in the account (whether spent or
         unspent outputs), and then, assuming that all such usages must be
         related to our wallet, calculates the correct wallet indices and
@@ -562,7 +591,7 @@ class WalletService(Service):
             # delegate inital address import to sync_addresses
             # this should be fast because "getaddressesbyaccount" should return
             # an empty list in this case
-            self.sync_addresses()
+            await self.sync_addresses()
             self.synced = True
             return
 
@@ -592,9 +621,15 @@ class WalletService(Service):
         #    showing imported addresses. Hence the gap-limit import at the end
         #    to ensure this is always true.
         remaining_used_addresses = self.used_addresses.copy()
-        addresses, saved_indices = self.collect_addresses_init()
-        for addr in addresses:
-            remaining_used_addresses.discard(addr)
+        if isinstance(self.wallet, (TaprootWallet, FrostWallet)):
+            pubkeys, saved_indices = await self.collect_pubkeys_init()
+            for pubkey in pubkeys:
+                addr = self.wallet.pubkey_to_addr(pubkey)
+                remaining_used_addresses.discard(addr)
+        else:
+            addresses, saved_indices = await self.collect_addresses_init()
+            for addr in addresses:
+                remaining_used_addresses.discard(addr)
 
         BATCH_SIZE = 100
         MAX_ITERATIONS = 20
@@ -602,12 +637,20 @@ class WalletService(Service):
         for j in range(MAX_ITERATIONS):
             if not remaining_used_addresses:
                 break
-            gap_addrs = self.collect_addresses_gap(gap_limit=BATCH_SIZE)
             # note: gap addresses *not* imported here; we are still trying
             # to find the highest-index used address, and assume that imports
             # are up to that index (at least) - see above main rationale.
-            for addr in gap_addrs:
-                remaining_used_addresses.discard(addr)
+            if isinstance(self.wallet, (TaprootWallet, FrostWallet)):
+                gap_pubkeys = await self.collect_pubkeys_gap(
+                    gap_limit=BATCH_SIZE)
+                for pubkey in gap_pubkeys:
+                    addr = self.wallet.pubkey_to_addr(pubkey)
+                    remaining_used_addresses.discard(addr)
+            else:
+                gap_addrs = await self.collect_addresses_gap(
+                    gap_limit=BATCH_SIZE)
+                for addr in gap_addrs:
+                    remaining_used_addresses.discard(addr)
 
             # increase wallet indices for next iteration
             for md in current_indices:
@@ -627,8 +670,8 @@ class WalletService(Service):
         # we ensure that all addresses that will be displayed (see wallet_utils.py,
         # function wallet_display()) are imported by importing gap limit beyond current
         # index:
-        if isinstance(self.wallet, TaprootWallet):
-            pubkeys = self.collect_pubkeys_gap()
+        if isinstance(self.wallet, (TaprootWallet, FrostWallet)):
+            pubkeys = await self.collect_pubkeys_gap()
             desc_scripts = [f'tr({bytes(P)[1:].hex()})' for P in pubkeys]
             descriptors = set()
             for desc in desc_scripts:
@@ -639,7 +682,7 @@ class WalletService(Service):
                 self.restart_callback)
         else:
             self.bci.import_addresses(
-                self.collect_addresses_gap(),
+                await self.collect_addresses_gap(),
                 self.get_wallet_name(),
                 self.restart_callback)
 
@@ -663,7 +706,7 @@ class WalletService(Service):
         #theres also a sys.exit() in BitcoinCoreInterface.import_addresses()
         #perhaps have sys.exit() placed inside the restart_cb that only
         # CLI scripts will use
-        if self.bci.__class__ == BitcoinCoreInterface:
+        if isinstance(self.bci, BitcoinCoreInterface):
             #Exit conditions cannot be included in tests
             restart_msg = ("Use `bitcoin-cli rescanblockchain` if you're "
                            "recovering an existing wallet from backup seed\n"
@@ -672,7 +715,7 @@ class WalletService(Service):
                 restart_cb(restart_msg)
             else:
                 jmprint(restart_msg, "important")
-                sys.exit(EXIT_SUCCESS)
+                twisted_sys_exit(EXIT_SUCCESS)
 
     def sync_burner_outputs(self, burner_txes):
         mixdepth = FidelityBondMixin.FIDELITY_BOND_MIXDEPTH
@@ -760,7 +803,7 @@ class WalletService(Service):
         return self.bci.get_block_height(self.bci.get_transaction(
             txid)["blockhash"])
 
-    def sync_addresses(self):
+    async def sync_addresses(self):
         """ Triggered by use of --recoversync option in scripts,
         attempts a full scan of the blockchain without assuming
         anything about past usages of addresses (does not use
@@ -769,8 +812,8 @@ class WalletService(Service):
         jlog.debug("requesting detailed wallet history")
         wallet_name = self.get_wallet_name()
 
-        if isinstance(self.wallet, TaprootWallet):
-            pubkeys, saved_indices = self.collect_pubkeys_init()
+        if isinstance(self.wallet, (TaprootWallet, FrostWallet)):
+            pubkeys, saved_indices = await self.collect_pubkeys_init()
             desc_scripts = [f'tr({bytes(P)[1:].hex()})' for P in pubkeys]
             descriptors= set()
             for desc in desc_scripts:
@@ -778,7 +821,7 @@ class WalletService(Service):
             import_needed = self.bci.import_descriptors_if_needed(
                 descriptors, wallet_name)
         else:
-            addresses, saved_indices = self.collect_addresses_init()
+            addresses, saved_indices = await self.collect_addresses_init()
             import_needed = self.bci.import_addresses_if_needed(
                 addresses, wallet_name)
         if import_needed:
@@ -820,18 +863,36 @@ class WalletService(Service):
         gap_limit_used = not self.check_gap_indices(used_indices)
         self.rewind_wallet_indices(used_indices, saved_indices)
 
-        new_addresses = self.collect_addresses_gap()
-        if self.bci.import_addresses_if_needed(new_addresses, wallet_name):
-            jlog.debug("Syncing iteration finished, additional step required (more address import required)")
-            self.synced = False
-            self.display_rescan_message_and_system_exit(self.restart_callback)
-        elif gap_limit_used:
-            jlog.debug("Syncing iteration finished, additional step required (gap limit used)")
-            self.synced = False
+        if isinstance(self.wallet, (TaprootWallet, FrostWallet)):
+            new_pubkeys = await self.collect_pubkeys_gap()
+            desc_scripts = [f'tr({bytes(P)[1:].hex()})' for P in new_pubkeys]
+            descriptors= set()
+            for desc in desc_scripts:
+                descriptors.add(f'{descsum_create(desc)}')
+            if self.bci.import_descriptors_if_needed(descriptors, wallet_name):
+                jlog.debug("Syncing iteration finished, additional step required (more pubkey import required)")
+                self.synced = False
+                self.display_rescan_message_and_system_exit(self.restart_callback)
+            elif gap_limit_used:
+                jlog.debug("Syncing iteration finished, additional step required (gap limit used)")
+                self.synced = False
+            else:
+                jlog.debug("Wallet successfully synced")
+                self.rewind_wallet_indices(used_indices, saved_indices)
+                self.synced = True
         else:
-            jlog.debug("Wallet successfully synced")
-            self.rewind_wallet_indices(used_indices, saved_indices)
-            self.synced = True
+            new_addresses = await self.collect_addresses_gap()
+            if self.bci.import_addresses_if_needed(new_addresses, wallet_name):
+                jlog.debug("Syncing iteration finished, additional step required (more address import required)")
+                self.synced = False
+                self.display_rescan_message_and_system_exit(self.restart_callback)
+            elif gap_limit_used:
+                jlog.debug("Syncing iteration finished, additional step required (gap limit used)")
+                self.synced = False
+            else:
+                jlog.debug("Wallet successfully synced")
+                self.rewind_wallet_indices(used_indices, saved_indices)
+                self.synced = True
 
     def sync_unspent(self):
         st = time.time()
@@ -855,7 +916,7 @@ class WalletService(Service):
             if self.isRunning:
                 self.stopService()
             stop_reactor()
-            sys.exit(EXIT_FAILURE)
+            twisted_sys_exit(EXIT_FAILURE)
         wallet_name = self.get_wallet_name()
         self.reset_utxos()
 
@@ -923,11 +984,11 @@ class WalletService(Service):
     def save_wallet(self):
         self.wallet.save()
 
-    def get_utxos_by_mixdepth(self, include_disabled: bool = False,
-                              verbose: bool = False,
-                              includeconfs: bool = False,
-                              limit_mixdepth: Optional[int] = None
-                             ) -> collections.defaultdict:
+    async def get_utxos_by_mixdepth(self, include_disabled: bool = False,
+                                    verbose: bool = False,
+                                    includeconfs: bool = False,
+                                    limit_mixdepth: Optional[int] = None
+                                   ) -> collections.defaultdict:
         """ Returns utxos by mixdepth in a dict, optionally including
         information about how many confirmations each utxo has.
         """
@@ -944,7 +1005,7 @@ class WalletService(Service):
                         confs = self.current_blockheight - h + 1
                     ubym_conv[m][u]["confs"] = confs
             return ubym_conv
-        ubym = self.wallet.get_utxos_by_mixdepth(
+        ubym = await self.wallet.get_utxos_by_mixdepth(
             include_disabled=include_disabled, includeheight=includeconfs,
             limit_mixdepth=limit_mixdepth)
         if not includeconfs:
@@ -958,15 +1019,16 @@ class WalletService(Service):
         else:
             return self.current_blockheight - minconfs + 1
 
-    def select_utxos(self, mixdepth, amount, utxo_filter=None, select_fn=None,
-                     minconfs=None, includeaddr=False, require_auth_address=False):
+    async def select_utxos(self, mixdepth, amount, utxo_filter=None,
+                           select_fn=None, minconfs=None, includeaddr=False,
+                           require_auth_address=False):
         """ Request utxos from the wallet in a particular mixdepth to satisfy
         a certain total amount, optionally set the selector function (or use
         the currently configured function set by the wallet, and optionally
         require a minimum of minconfs confirmations (default none means
         unconfirmed are allowed).
         """
-        return self.wallet.select_utxos(
+        return await self.wallet.select_utxos(
             mixdepth, amount, utxo_filter=utxo_filter, select_fn=select_fn,
             maxheight=self.minconfs_to_maxheight(minconfs),
             includeaddr=includeaddr, require_auth_address=require_auth_address)
@@ -993,17 +1055,17 @@ class WalletService(Service):
             self.bci.import_descriptors(
                 [descriptor], self.wallet.get_wallet_name())
 
-    def get_internal_addr(self, mixdepth):
-        if isinstance(self.wallet, TaprootWallet):
-            pubkey = self.wallet.get_internal_pubkey(mixdepth)
+    async def get_internal_addr(self, mixdepth):
+        if isinstance(self.wallet, (TaprootWallet, FrostWallet)):
+            pubkey = await self.wallet.get_internal_pubkey(mixdepth)
             self.import_pubkey(pubkey)
             return self.wallet.pubkey_to_addr(pubkey)
         else:
-            addr = self.wallet.get_internal_addr(mixdepth)
+            addr = await self.wallet.get_internal_addr(mixdepth)
             self.import_addr(addr)
             return addr
 
-    def collect_addresses_init(self) -> Tuple[Set[str], Dict[int, List[int]]]:
+    async def collect_addresses_init(self) -> Tuple[Set[str], Dict[int, List[int]]]:
         """ Collects the "current" set of addresses,
         as defined by the indices recorded in the wallet's
         index cache (persisted in the wallet file usually).
@@ -1019,25 +1081,30 @@ class WalletService(Service):
                                  BaseWallet.ADDRESS_TYPE_INTERNAL):
                 next_unused = self.get_next_unused_index(md, address_type)
                 for index in range(next_unused):
-                    addresses.add(self.get_addr(md, address_type, index))
+                    addresses.add(
+                        await self.get_addr(md, address_type, index))
                 for index in range(self.gap_limit):
-                    addresses.add(self.get_new_addr(md, address_type,
-                                                    validate_cache=False))
+                    addresses.add(
+                        await self.get_new_addr(
+                            md, address_type, validate_cache=False))
                 # reset the indices to the value we had before the
                 # new address calls:
                 self.set_next_index(md, address_type, next_unused)
                 saved_indices[md][address_type] = next_unused
             # include any imported addresses
             for path in self.yield_imported_paths(md):
-                addresses.add(self.get_address_from_path(path))
+                addresses.add(await self.get_address_from_path(path))
         if isinstance(self.wallet, FidelityBondMixin):
             md = FidelityBondMixin.FIDELITY_BOND_MIXDEPTH
             address_type = FidelityBondMixin.BIP32_TIMELOCK_ID
             for timenumber in range(FidelityBondMixin.TIMENUMBER_COUNT):
-                addresses.add(self.get_addr(md, address_type, timenumber))
+                addresses.add(
+                    await self.get_addr(md, address_type, timenumber))
         return addresses, saved_indices
 
-    def collect_pubkeys_init(self) -> Tuple[Set[str], Dict[int, List[int]]]:
+    async def collect_pubkeys_init(
+        self
+    ) -> Tuple[Set[str], Dict[int, List[int]]]:
         """ Collects the "current" set of pubkeys,
         as defined by the indices recorded in the wallet's
         index cache (persisted in the wallet file usually).
@@ -1053,17 +1120,19 @@ class WalletService(Service):
                                  BaseWallet.ADDRESS_TYPE_INTERNAL):
                 next_unused = self.get_next_unused_index(md, address_type)
                 for index in range(next_unused):
-                    pubkeys.add(self.get_pubkey(md, address_type, index))
+                    pubkey = await self.get_pubkey(md, address_type, index)
+                    pubkeys.add(pubkey)
                 for index in range(self.gap_limit):
-                    pubkeys.add(self.get_new_pubkey(
-                        md, address_type, validate_cache=False))
+                    pubkey = await self.get_new_pubkey(
+                        md, address_type, validate_cache=False)
+                    pubkeys.add(pubkey)
                 # reset the indices to the value we had before the
                 # new address calls:
                 self.set_next_index(md, address_type, next_unused)
                 saved_indices[md][address_type] = next_unused
         return pubkeys, saved_indices
 
-    def collect_addresses_gap(self, gap_limit=None):
+    async def collect_addresses_gap(self, gap_limit=None):
         gap_limit = gap_limit or self.gap_limit
         addresses = set()
         for md in range(self.max_mixdepth + 1):
@@ -1071,12 +1140,13 @@ class WalletService(Service):
                                  BaseWallet.ADDRESS_TYPE_EXTERNAL):
                 old_next = self.get_next_unused_index(md, address_type)
                 for index in range(gap_limit):
-                    addresses.add(self.get_new_addr(md, address_type,
-                                                    validate_cache=False))
+                    addresses.add(
+                        await self.get_new_addr(
+                            md, address_type, validate_cache=False))
                 self.set_next_index(md, address_type, old_next)
         return addresses
 
-    def collect_pubkeys_gap(self, gap_limit=None):
+    async def collect_pubkeys_gap(self, gap_limit=None):
         gap_limit = gap_limit or self.gap_limit
         pubkeys = set()
         for md in range(self.max_mixdepth + 1):
@@ -1084,18 +1154,19 @@ class WalletService(Service):
                                  BaseWallet.ADDRESS_TYPE_EXTERNAL):
                 old_next = self.get_next_unused_index(md, address_type)
                 for index in range(gap_limit):
-                    pubkeys.add(self.get_new_pubkey(
-                        md, address_type, validate_cache=False))
+                    pubkey = await self.get_new_pubkey(
+                        md, address_type, validate_cache=False)
+                    pubkeys.add(pubkey)
                 self.set_next_index(md, address_type, old_next)
         return pubkeys
 
-    def get_external_addr(self, mixdepth):
-        if isinstance(self.wallet, TaprootWallet):
-            pubkey = self.wallet.get_external_pubkey(mixdepth)
+    async def get_external_addr(self, mixdepth):
+        if isinstance(self.wallet, (TaprootWallet, FrostWallet)):
+            pubkey = await self.wallet.get_external_pubkey(mixdepth)
             self.import_pubkey(pubkey)
             return self.wallet.pubkey_to_addr(pubkey)
         else:
-            addr = self.wallet.get_external_addr(mixdepth)
+            addr = await self.wallet.get_external_addr(mixdepth)
             self.import_addr(addr)
             return addr
 

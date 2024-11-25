@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 import json
@@ -10,22 +11,30 @@ from numbers import Integral
 from collections import Counter, defaultdict
 from itertools import islice, chain
 from typing import Callable, Optional, Tuple, Union
+
+from twisted.internet import reactor, task
+
 from jmclient import (get_network, WALLET_IMPLEMENTATIONS, Storage, podle,
-    jm_single, WalletError, BaseWallet, VolatileStorage,
+    jm_single, WalletError, BaseWallet, VolatileStorage, DKGRecoveryStorage,
     StoragePasswordError, is_taproot_mode, is_segwit_mode, SegwitLegacyWallet,
     LegacyWallet, SegwitWallet, FidelityBondMixin, FidelityBondWatchonlyWallet,
-    TaprootWallet, is_native_segwit_mode, load_program_config,
-    add_base_options, check_regtest, JMClientProtocolFactory, start_reactor)
+    TaprootWallet, is_native_segwit_mode, load_program_config, is_frost_mode,
+    add_base_options, check_regtest, JMClientProtocolFactory, start_reactor,
+    FrostWallet, DKGStorage)
 from jmclient.blockchaininterface import (BitcoinCoreInterface,
     BitcoinCoreNoHistoryInterface)
 from jmclient.wallet_service import WalletService
+from jmbase import stop_reactor
 from jmbase.support import (get_password, jmprint, EXIT_FAILURE,
                             EXIT_ARGERROR, utxo_to_utxostr, hextobin, bintohex,
                             IndentedHelpFormatterWithNL, dict_factory,
-                            cli_prompt_user_yesno)
+                            cli_prompt_user_yesno, twisted_sys_exit)
 
+from jmfrost.chilldkg_ref.chilldkg import hostpubkey_gen
+from .frost_clients import FROSTClient
+from .frost_ipc import FrostIPCServer, FrostIPCClient
 from .cryptoengine import TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WPKH, \
-    TYPE_SEGWIT_WALLET_FIDELITY_BONDS, TYPE_P2TR
+    TYPE_SEGWIT_WALLET_FIDELITY_BONDS, TYPE_P2TR, TYPE_P2TR_FROST
 from .output import fmt_utxo
 import jmbitcoin as btc
 from .descriptor import descsum_create
@@ -59,6 +68,14 @@ The method is one of the following:
     -H and proof which is output of Bitcoin Core\'s RPC call gettxoutproof.
 (createwatchonly) Create a watch-only fidelity bond wallet.
 (setlabel) Set the label associated with the given address.
+(hostpubkey) display host public key
+(servefrost) run only as DKG/FROST counterparty
+(dkgrecover) Recovers a wallet DKG data from Recovery DKG File
+(dkgls) display FrostWallet dkg data
+(dkgrm) rm FrostWallet dkg data by session_id list
+(recdkgls) display Recovery DKG File data
+(recdkgrm) rm Recovery DKG File data by session_id list
+(testfrost) run only as test of FROST signing
 """
     parser = OptionParser(usage='usage: %prog [options] [wallet file] [method] [args..]',
                           description=description, formatter=IndentedHelpFormatterWithNL())
@@ -406,15 +423,16 @@ def get_tx_info(txid: bytes, tx_cache: Optional[dict] = None) -> Tuple[
         rpctx.get('blocktime', 0), rpctx_deser
 
 
-def get_imported_privkey_branch(wallet_service, m, showprivkey):
+async def get_imported_privkey_branch(wallet_service, m, showprivkey):
     entries = []
     balance_by_script = defaultdict(int)
-    for data in wallet_service.get_utxos_at_mixdepth(m,
-        include_disabled=True).values():
+    _utxos = await wallet_service.get_utxos_at_mixdepth(
+        m, include_disabled=True)
+    for data in _utxos.values():
         balance_by_script[data['script']] += data['value']
     for path in wallet_service.yield_imported_paths(m):
-        addr = wallet_service.get_address_from_path(path)
-        script = wallet_service.get_script_from_path(path)
+        addr = await wallet_service.get_address_from_path(path)
+        script = await wallet_service.get_script_from_path(path)
         balance = balance_by_script.get(script, 0)
         status = ('used' if balance else 'empty')
         if showprivkey:
@@ -429,14 +447,16 @@ def get_imported_privkey_branch(wallet_service, m, showprivkey):
         return WalletViewBranch("m/0", m, -1, branchentries=entries)
     return None
 
-def wallet_showutxos(wallet_service: WalletService, showprivkey: bool,
-                     limit_mixdepth: Optional[int] = None) -> str:
+async def wallet_showutxos(wallet_service: WalletService, showprivkey: bool,
+                           limit_mixdepth: Optional[int] = None) -> str:
     unsp = {}
     max_tries = jm_single().config.getint("POLICY", "taker_utxo_retries")
-    utxos = wallet_service.get_utxos_by_mixdepth(include_disabled=True,
-        includeconfs=True, limit_mixdepth=limit_mixdepth)
-    for md in utxos:
-        (enabled, disabled) = get_utxos_enabled_disabled(wallet_service, md)
+    _utxos = await wallet_service.get_utxos_by_mixdepth(
+        include_disabled=True, includeconfs=True,
+        limit_mixdepth=limit_mixdepth)
+    for md in _utxos:
+        (enabled, disabled) = await get_utxos_enabled_disabled(wallet_service,
+                                                               md)
         for u, av in utxos[md].items():
             success, us = utxo_to_utxostr(u)
             assert success
@@ -491,7 +511,7 @@ def get_utxo_status_string(utxos, utxos_enabled, path):
         utxo_status_string += ' [PENDING]'
     return utxo_status_string
 
-def wallet_display(wallet_service, showprivkey, displayall=False,
+async def wallet_display(wallet_service, showprivkey, displayall=False,
         serialized=True, summarized=False, mixdepth=None, jsonified=False):
     """build the walletview object,
     then return its serialization directly if serialized,
@@ -535,8 +555,9 @@ def wallet_display(wallet_service, showprivkey, displayall=False,
 
     acctlist = []
 
-    utxos = wallet_service.get_utxos_by_mixdepth(include_disabled=True, includeconfs=True)
-    utxos_enabled = wallet_service.get_utxos_by_mixdepth()
+    utxos = await wallet_service.get_utxos_by_mixdepth(
+        include_disabled=True, includeconfs=True)
+    utxos_enabled = await wallet_service.get_utxos_by_mixdepth()
 
     if mixdepth:
         md_range = range(mixdepth, mixdepth + 1)
@@ -557,10 +578,11 @@ def wallet_display(wallet_service, showprivkey, displayall=False,
             gap_addrs = []
             for k in range(unused_index + wallet_service.gap_limit):
                 path = wallet_service.get_path(m, address_type, k)
-                addr = wallet_service.get_address_from_path(path)
+                addr = await wallet_service.get_address_from_path(path)
                 if k >= unused_index:
-                    if isinstance(wallet_service.wallet, TaprootWallet):
-                        P = wallet_service.get_pubkey(m, address_type, k)
+                    if isinstance(wallet_service.wallet,
+                                  (TaprootWallet, FrostWallet)):
+                        P = await wallet_service.get_pubkey(m, address_type, k)
                         desc = f'tr({bytes(P)[1:].hex()})'
                         gap_addrs.append(f'{descsum_create(desc)}')
                     else:
@@ -584,7 +606,8 @@ def wallet_display(wallet_service, showprivkey, displayall=False,
             # displayed for user deposit.
             # It also does not apply to fidelity bond addresses which are created manually.
             if address_type == BaseWallet.ADDRESS_TYPE_EXTERNAL and wallet_service.bci is not None:
-                if isinstance(wallet_service.wallet, TaprootWallet):
+                if isinstance(wallet_service.wallet,
+                              (TaprootWallet, FrostWallet)):
                     wallet_service.bci.import_descriptors(
                         gap_addrs, wallet_service.get_wallet_name())
                 else:
@@ -601,7 +624,7 @@ def wallet_display(wallet_service, showprivkey, displayall=False,
             entrylist = []
             for timenumber in range(FidelityBondMixin.TIMENUMBER_COUNT):
                 path = wallet_service.get_path(m, address_type, timenumber)
-                addr = wallet_service.get_address_from_path(path)
+                addr = await wallet_service.get_address_from_path(path)
                 label = wallet_service.get_address_label(addr)
                 timelock = datetime.utcfromtimestamp(0) + timedelta(seconds=path[-1])
 
@@ -666,7 +689,7 @@ def wallet_display(wallet_service, showprivkey, displayall=False,
             branchlist.append(WalletViewBranch(path, m, address_type, entrylist,
                 xpub=xpub_key))
 
-        ipb = get_imported_privkey_branch(wallet_service, m, showprivkey)
+        ipb = await get_imported_privkey_branch(wallet_service, m, showprivkey)
         if ipb:
             branchlist.append(ipb)
         #get the xpub key of the whole account
@@ -732,17 +755,18 @@ def cli_do_support_fidelity_bonds() -> bool:
         jmprint("Not supporting fidelity bonds", "info")
         return False
 
-def wallet_generate_recover_bip39(method: str,
-                                  walletspath: str,
-                                  default_wallet_name: str,
-                                  display_seed_callback: Callable[[str, str], None],
-                                  enter_seed_callback: Optional[Callable[[], Tuple[Optional[str], Optional[str]]]],
-                                  enter_wallet_password_callback: Callable[[], str],
-                                  enter_wallet_file_name_callback: Callable[[], str],
-                                  enter_if_use_seed_extension: Optional[Callable[[], bool]],
-                                  enter_seed_extension_callback: Optional[Callable[[], Optional[str]]],
-                                  enter_do_support_fidelity_bonds: Callable[[], bool],
-                                  mixdepth: int = DEFAULT_MIXDEPTH) -> bool:
+async def wallet_generate_recover_bip39(
+        method: str,
+        walletspath: str,
+        default_wallet_name: str,
+        display_seed_callback: Callable[[str, str], None],
+        enter_seed_callback: Optional[Callable[[], Tuple[Optional[str], Optional[str]]]],
+        enter_wallet_password_callback: Callable[[], str],
+        enter_wallet_file_name_callback: Callable[[], str],
+        enter_if_use_seed_extension: Optional[Callable[[], bool]],
+        enter_seed_extension_callback: Optional[Callable[[], Optional[str]]],
+        enter_do_support_fidelity_bonds: Callable[[], bool],
+        mixdepth: int = DEFAULT_MIXDEPTH) -> bool:
     entropy = None
     mnemonic_extension = None
     if method == "generate":
@@ -777,32 +801,41 @@ def wallet_generate_recover_bip39(method: str,
     if not wallet_name:
         wallet_name = default_wallet_name
     wallet_path = os.path.join(walletspath, wallet_name)
-    if is_taproot_mode():
+    if is_taproot_mode() or is_frost_mode():
         support_fidelity_bonds = False
     else:
         support_fidelity_bonds = enter_do_support_fidelity_bonds()
     wallet_cls = get_wallet_cls(get_configured_wallet_type(support_fidelity_bonds))
-    wallet = create_wallet(wallet_path, password, mixdepth, wallet_cls,
-                           entropy=entropy,
-                           entropy_extension=mnemonic_extension)
+    wallet = await create_wallet(
+        wallet_path, password, mixdepth, wallet_cls, entropy=entropy,
+        entropy_extension=mnemonic_extension)
     mnemonic, mnext = wallet.get_mnemonic_words()
     display_seed_callback and display_seed_callback(mnemonic, mnext or '')
     wallet.close()
     return True
 
 
-def wallet_generate_recover(method, walletspath,
-                            default_wallet_name='wallet.jmdat',
-                            mixdepth=DEFAULT_MIXDEPTH):
-    if is_taproot_mode():
-        return wallet_generate_recover_bip39(method, walletspath,
+async def wallet_generate_recover(method, walletspath,
+                                  default_wallet_name='wallet.jmdat',
+                                  mixdepth=DEFAULT_MIXDEPTH):
+    if is_frost_mode():
+        return await wallet_generate_recover_bip39(
+            method, walletspath,
+            default_wallet_name, cli_display_user_words, cli_user_mnemonic_entry,
+            cli_get_wallet_passphrase_check, cli_get_wallet_file_name,
+            cli_do_use_mnemonic_extension, cli_get_mnemonic_extension,
+            cli_do_support_fidelity_bonds, mixdepth=mixdepth)
+    elif is_taproot_mode():
+        return await wallet_generate_recover_bip39(
+            method, walletspath,
             default_wallet_name, cli_display_user_words, cli_user_mnemonic_entry,
             cli_get_wallet_passphrase_check, cli_get_wallet_file_name,
             cli_do_use_mnemonic_extension, cli_get_mnemonic_extension,
             cli_do_support_fidelity_bonds, mixdepth=mixdepth)
     elif is_segwit_mode():
         #Here using default callbacks for scripts (not used in Qt)
-        return wallet_generate_recover_bip39(method, walletspath,
+        return await wallet_generate_recover_bip39(
+            method, walletspath,
             default_wallet_name, cli_display_user_words, cli_user_mnemonic_entry,
             cli_get_wallet_passphrase_check, cli_get_wallet_file_name,
             cli_do_use_mnemonic_extension, cli_get_mnemonic_extension,
@@ -829,8 +862,8 @@ def wallet_generate_recover(method, walletspath,
         wallet_name = default_wallet_name
     wallet_path = os.path.join(walletspath, wallet_name)
 
-    wallet = create_wallet(wallet_path, password, mixdepth,
-                           wallet_cls=LegacyWallet, entropy=entropy)
+    wallet = await create_wallet(wallet_path, password, mixdepth,
+                                 wallet_cls=LegacyWallet, entropy=entropy)
     jmprint("Write down and safely store this wallet recovery seed\n\n{}\n"
           .format(wallet.get_mnemonic_words()[0]), "important")
     wallet.close()
@@ -845,7 +878,7 @@ def wallet_change_passphrase(walletservice,
         return True
 
 
-def wallet_fetch_history(wallet, options):
+async def wallet_fetch_history(wallet, options):
     # sort txes in a db because python can be really bad with large lists
     con = sqlite3.connect(":memory:")
     con.row_factory = dict_factory
@@ -876,8 +909,8 @@ def wallet_fetch_history(wallet, options):
         'FROM transactions '
         'WHERE (blockhash IS NOT NULL AND blocktime IS NOT NULL) OR conflicts = 0 '
         'ORDER BY blocktime').fetchall()
-    wallet_script_set = set(wallet.get_script_from_path(p)
-                            for p in wallet.yield_known_paths())
+    wallet_script_set = set([await wallet.get_script_from_path(p)
+                             for p in wallet.yield_known_paths()])
 
     def s():
         return ',' if options.csv else ' '
@@ -1129,8 +1162,8 @@ def wallet_fetch_history(wallet, options):
         jmprint(('BUG ERROR: wallet balance (%s) does not match balance from ' +
             'history (%s)') % (btc.sat_to_str(total_wallet_balance),
                 btc.sat_to_str(balance)))
-    wallet_utxo_count = sum(map(len, wallet.get_utxos_by_mixdepth(
-        include_disabled=True).values()))
+    _utxos = await wallet.get_utxos_by_mixdepth(include_disabled=True)
+    wallet_utxo_count = sum(map(len, _utxos.values()))
     if utxo_count + unconfirmed_utxo_count != wallet_utxo_count:
         jmprint(('BUG ERROR: wallet utxo count (%d) does not match utxo count from ' +
             'history (%s)') % (wallet_utxo_count, utxo_count))
@@ -1150,7 +1183,7 @@ def wallet_showseed(wallet):
     return text
 
 
-def wallet_importprivkey(wallet, mixdepth):
+async def wallet_importprivkey(wallet, mixdepth):
     jmprint("WARNING: This imported key will not be recoverable with your 12 "
           "word mnemonic phrase. Make sure you have backups.", "warning")
     jmprint("WARNING: Make sure that the type of the public address previously "
@@ -1173,7 +1206,7 @@ def wallet_importprivkey(wallet, mixdepth):
             print("Failed to import key {}: {}".format(wif, e))
             import_failed += 1
         else:
-            imported_addr.append(wallet.get_address_from_path(path))
+            imported_addr.append(await wallet.get_address_from_path(path))
 
     if not imported_addr:
         jmprint("Warning: No keys imported!", "error")
@@ -1197,8 +1230,9 @@ def wallet_dumpprivkey(wallet, hdpath):
     return wallet.get_wif_path(path)  # will raise exception on invalid path
 
 
-def wallet_signmessage(wallet, hdpath: str, message: str,
-                       out_str: bool = True) -> Union[Tuple[str, str, str], str]:
+async def wallet_signmessage(
+        wallet, hdpath: str, message: str,
+        out_str: bool = True) -> Union[Tuple[str, str, str], str]:
     """ Given a wallet, a BIP32 HD path (as can be output
     from the display method) and a message string, returns
     a base64 encoded signature along with the corresponding
@@ -1217,18 +1251,18 @@ def wallet_signmessage(wallet, hdpath: str, message: str,
         return "Error: no message specified"
 
     path = wallet.path_repr_to_path(hdpath)
-    addr, sig = wallet.sign_message(msg, path)
+    addr, sig = await wallet.sign_message(msg, path)
     if not out_str:
         return (sig, message, addr)
     return ("Signature: {}\nMessage: {}\nAddress: {}\n"
     "To verify this in Electrum use Tools->Sign/verify "
     "message.".format(sig, message, addr))
 
-def wallet_signpsbt(wallet_service, psbt):
+async def wallet_signpsbt(wallet_service, psbt):
     if not psbt:
         return "Error: no PSBT specified"
 
-    signed_psbt_and_signresult, err = wallet_service.sign_psbt(
+    signed_psbt_and_signresult, err = await wallet_service.sign_psbt(
         base64.b64decode(psbt.encode('ascii')), with_sign_result=True)
     if err:
         return "Failed to sign PSBT, quitting. Error message: {}".format(err)
@@ -1254,8 +1288,9 @@ def wallet_signpsbt(wallet_service, psbt):
                 "inputs.".format(signresult.num_inputs_signed))
     return ""
 
-def display_utxos_for_disable_choice_default(wallet_service, utxos_enabled,
-        utxos_disabled):
+async def display_utxos_for_disable_choice_default(wallet_service,
+                                                   utxos_enabled,
+                                                   utxos_disabled):
     """ CLI implementation of the callback required as described in
     wallet_disableutxo
     """
@@ -1276,20 +1311,21 @@ def display_utxos_for_disable_choice_default(wallet_service, utxos_enabled,
             break
         return ret
 
-    def output_utxos(utxos, status, start=0):
+    async def output_utxos(utxos, status, start=0):
         for (txid, idx), v in utxos.items():
             value = v['value']
             jmprint("{:4}: {} ({}): {} -- {}".format(
                 start, fmt_utxo((txid, idx)),
-                wallet_service.wallet.script_to_addr(v["script"]),
+                await wallet_service.wallet.script_to_addr(v["script"]),
                 btc.amount_to_str(value), status))
             start += 1
             yield txid, idx
 
     jmprint("List of UTXOs:")
-    ulist = list(output_utxos(utxos_disabled, 'FROZEN'))
+    ulist = list(await output_utxos(utxos_disabled, 'FROZEN'))
     disabled_max = len(ulist) - 1
-    ulist.extend(output_utxos(utxos_enabled, 'NOT FROZEN', start=len(ulist)))
+    ulist.extend(await output_utxos(utxos_enabled, 'NOT FROZEN',
+                                    start=len(ulist)))
     max_id = len(ulist) - 1
     chosen_idx = default_user_choice(max_id)
     if chosen_idx == -1:
@@ -1301,19 +1337,21 @@ def display_utxos_for_disable_choice_default(wallet_service, utxos_enabled,
     disable = False if chosen_idx <= disabled_max else True
     return ulist[chosen_idx], disable
 
-def get_utxos_enabled_disabled(wallet_service: WalletService,
+async def get_utxos_enabled_disabled(wallet_service: WalletService,
                                md: int) -> Tuple[dict, dict]:
     """ Returns dicts for enabled and disabled separately
     """
-    utxos_enabled = wallet_service.get_utxos_at_mixdepth(md)
-    utxos_all = wallet_service.get_utxos_at_mixdepth(md, include_disabled=True)
+    utxos_enabled = await wallet_service.get_utxos_at_mixdepth(md)
+    utxos_all = await wallet_service.get_utxos_at_mixdepth(
+        md, include_disabled=True)
     utxos_disabled_keyset = set(utxos_all).difference(set(utxos_enabled))
     utxos_disabled = {}
     for u in utxos_disabled_keyset:
         utxos_disabled[u] = utxos_all[u]
     return utxos_enabled, utxos_disabled
 
-def wallet_freezeutxo(wallet_service, md, display_callback=None, info_callback=None):
+async def wallet_freezeutxo(wallet_service, md,
+                            display_callback=None, info_callback=None):
     """ Given a wallet and a mixdepth, display to the user
     the set of available utxos, indexed by integer, and accept a choice
     of index to "freeze", then commit this disabling to the wallet storage,
@@ -1344,14 +1382,18 @@ def wallet_freezeutxo(wallet_service, md, display_callback=None, info_callback=N
         info_callback("Specify the mixdepth with the -m flag", "error")
         return "Failed"
     while True:
-        utxos_enabled, utxos_disabled = get_utxos_enabled_disabled(
+        utxos_enabled, utxos_disabled = await get_utxos_enabled_disabled(
             wallet_service, md)
         if utxos_disabled == {} and utxos_enabled == {}:
             info_callback("The mixdepth: " + str(md) + \
                 " contains no utxos to freeze/unfreeze.", "error")
             return "Failed"
-        display_ret = display_callback(wallet_service,
-            utxos_enabled, utxos_disabled)
+        if asyncio.iscoroutine(display_callback):
+            display_ret = await display_callback(wallet_service,
+                utxos_enabled, utxos_disabled)
+        else:
+            display_ret = display_callback(wallet_service,
+                utxos_enabled, utxos_disabled)
         if display_ret is None:
             break
         if display_ret == "all":
@@ -1373,7 +1415,7 @@ def wallet_freezeutxo(wallet_service, md, display_callback=None, info_callback=N
 
 
 
-def wallet_gettimelockaddress(wallet, locktime_string):
+async def wallet_gettimelockaddress(wallet, locktime_string):
     if not isinstance(wallet, FidelityBondMixin):
         jmprint("Error: not a fidelity bond wallet", "error")
         return ""
@@ -1400,7 +1442,7 @@ def wallet_gettimelockaddress(wallet, locktime_string):
         + " not linked to your identity. Also, use a sweep transaction when funding the"
         + " timelocked address, i.e. Don't create a change address. See the privacy warnings in"
         + " fidelity-bonds.md")
-    addr = wallet.get_address_from_path(path)
+    addr = await wallet.get_address_from_path(path)
     return addr
 
 def wallet_addtxoutproof(wallet_service, hdpath, txoutproof):
@@ -1424,7 +1466,7 @@ def wallet_addtxoutproof(wallet_service, hdpath, txoutproof):
         new_merkle_branch, block_index)
     return "Done"
 
-def wallet_createwatchonly(wallet_root_path, master_pub_key):
+async def wallet_createwatchonly(wallet_root_path, master_pub_key):
 
     wallet_name = cli_get_wallet_file_name(defaultname="watchonly.jmdat")
     if not wallet_name:
@@ -1443,13 +1485,15 @@ def wallet_createwatchonly(wallet_root_path, master_pub_key):
         return ""
     entropy = entropy.encode()
 
-    wallet = create_wallet(wallet_path, password,
+    wallet = await create_wallet(wallet_path, password,
         max_mixdepth=FidelityBondMixin.FIDELITY_BOND_MIXDEPTH,
         wallet_cls=FidelityBondWatchonlyWallet, entropy=entropy)
     return "Done"
 
 def get_configured_wallet_type(support_fidelity_bonds):
     configured_type = TYPE_P2PKH
+    if is_frost_mode():
+        return TYPE_P2TR_FROST
     if is_taproot_mode():
         return TYPE_P2TR
     elif is_segwit_mode():
@@ -1474,17 +1518,36 @@ def get_wallet_cls(wtype):
                           "".format(wtype))
     return cls
 
-def create_wallet(path, password, max_mixdepth, wallet_cls, **kwargs):
+async def create_wallet(path, password, max_mixdepth, wallet_cls, **kwargs):
     storage = Storage(path, password, create=True)
-    wallet_cls.initialize(storage, get_network(), max_mixdepth=max_mixdepth,
-                          **kwargs)
-    storage.save()
-    return wallet_cls(storage,
-                gap_limit=jm_single().config.getint("POLICY", "gaplimit"))
+    gap_limit = jm_single().config.getint("POLICY", "gaplimit")
+    if wallet_cls == FrostWallet:
+        dkg_path = DKGStorage.dkg_path(path)
+        dkg_storage = DKGStorage(dkg_path, create=True)
+        dkg_recovery_path = DKGRecoveryStorage.dkg_recovery_path(path)
+        recovery_storage = DKGRecoveryStorage(dkg_recovery_path, create=True)
+        wallet_cls.initialize(storage, dkg_storage, recovery_storage,
+                              get_network(), max_mixdepth=max_mixdepth,
+                              **kwargs)
+        storage.save()
+        dkg_storage.save()
+        recovery_storage.save()
+        wallet = wallet_cls(storage, dkg_storage, recovery_storage,
+                            gap_limit=gap_limit)
+        await wallet.async_init(storage, gap_limit=gap_limit)
+        return wallet
+    else:
+        wallet_cls.initialize(storage, get_network(),
+                              max_mixdepth=max_mixdepth, **kwargs)
+        storage.save()
+        wallet = wallet_cls(storage, gap_limit=gap_limit)
+        await wallet.async_init(storage, gap_limit=gap_limit)
+        return wallet
 
 
-def open_test_wallet_maybe(path, seed, max_mixdepth,
-                           test_wallet_cls=SegwitWallet, wallet_password_stdin=False, **kwargs):
+async def open_test_wallet_maybe(
+        path, seed, max_mixdepth, test_wallet_cls=SegwitWallet,
+        wallet_password_stdin=False, **kwargs):
     """
     Create a volatile test wallet if path is a hex-encoded string of length 64,
     otherwise run open_wallet().
@@ -1528,13 +1591,16 @@ def open_test_wallet_maybe(path, seed, max_mixdepth,
 
     if wallet_password_stdin is True:
         password = read_password_stdin()
-        return open_wallet(path, ask_for_password=False, password=password, mixdepth=max_mixdepth, **kwargs)
+        return await open_wallet(
+            path, ask_for_password=False, password=password,
+            mixdepth=max_mixdepth, **kwargs)
 
-    return open_wallet(path, mixdepth=max_mixdepth, **kwargs)
+    return await open_wallet(path, mixdepth=max_mixdepth, **kwargs)
 
 
-def open_wallet(path, ask_for_password=True, password=None, read_only=False,
-                **kwargs):
+async def open_wallet(path, ask_for_password=True, password=None,
+                      read_only=False, load_dkg=False, dkg_read_only=True,
+                      **kwargs):
     """
     Open the wallet file at path and return the corresponding wallet object.
 
@@ -1549,6 +1615,9 @@ def open_wallet(path, ask_for_password=True, password=None, read_only=False,
     returns:
         wallet object
     """
+    if not read_only and not dkg_read_only:
+        raise Exception('open_wallet: params read_only and dkg_read_only'
+                        ' can not be mutually unset')
     if not os.path.isfile(path):
         raise Exception("Failed to open wallet at '{}': not a file".format(path))
 
@@ -1580,7 +1649,51 @@ def open_wallet(path, ask_for_password=True, password=None, read_only=False,
     if jm_single().config.get("POLICY", "wallet_caching_disabled") == "true":
         load_cache = False
     wallet_cls = get_wallet_cls_from_storage(storage)
-    wallet = wallet_cls(storage, load_cache=load_cache, **kwargs)
+
+    if wallet_cls == FrostWallet:
+        dkg_storage = None
+        recovery_storage = None
+        if load_dkg:
+            dkg_path = DKGStorage.dkg_path(path)
+            if not os.path.isfile(dkg_path):
+                raise Exception(f"Failed to open DKG File at "
+                                f"'{dkg_path}': not a file")
+            if not DKGStorage.is_storage_file(dkg_path):
+                raise Exception(f"Failed to open DKG File at "
+                                f"'{dkg_path}': not a valid file magic.")
+            try:
+                if not dkg_read_only:
+                    DKGStorage.verify_lock(dkg_path)
+                dkg_storage = DKGStorage(dkg_path, read_only=dkg_read_only)
+            except Exception as e:
+                jmprint(f"Failed to load DKG File, "
+                        f"error message: {repr(e)}",
+                        "error")
+                raise e
+            dkg_recovery_path = DKGRecoveryStorage.dkg_recovery_path(path)
+            if not os.path.isfile(dkg_recovery_path):
+                raise Exception(f"Failed to open DKG Recovery File at "
+                                f"'{dkg_recovery_path}': not a file")
+            if not DKGRecoveryStorage.is_storage_file(dkg_recovery_path):
+                raise Exception(f"Failed to open DKG Recovery File at "
+                                f"'{dkg_recovery_path}': not a valid "
+                                f"file magic.")
+            try:
+                if not dkg_read_only:
+                    DKGRecoveryStorage.verify_lock(dkg_recovery_path)
+                recovery_storage = DKGRecoveryStorage(
+                    dkg_recovery_path, read_only=dkg_read_only)
+            except Exception as e:
+                jmprint(f"Failed to load DKG Recovery File, "
+                        f"error message: {repr(e)}",
+                        "error")
+                raise e
+        wallet = wallet_cls(storage, dkg_storage, recovery_storage,
+                            load_cache=load_cache, **kwargs)
+        await wallet.async_init(storage, load_cache=load_cache, **kwargs)
+    else:
+        wallet = wallet_cls(storage, load_cache=load_cache, **kwargs)
+        await wallet.async_init(storage, load_cache=load_cache, **kwargs)
     wallet_sanity_check(wallet)
     return wallet
 
@@ -1610,7 +1723,7 @@ def read_password_stdin():
     return sys.stdin.readline().replace('\n','').encode('utf-8')
 
 
-def wallet_tool_main(wallet_root_path):
+async def wallet_tool_main(wallet_root_path):
     """Main wallet tool script function; returned is a string (output or error)
     """
     parser = get_wallettool_parser()
@@ -1629,14 +1742,23 @@ def wallet_tool_main(wallet_root_path):
     readonly_methods = ['display', 'displayall', 'summary', 'showseed',
                         'history', 'showutxos', 'dumpprivkey', 'signmessage',
                         'gettimelockaddress']
+    # FrostWallet related methods
+    frost_load_dkg_methods = ['hostpubkey', 'servefrost', 'dkgrecover',
+                              'dkgls', 'dkgrm', 'recdkgls', 'recdkgrm']
+    frost_noscan_methods = ['hostpubkey', 'servefrost', 'dkgrecover',
+                            'dkgls', 'dkgrm', 'recdkgls', 'recdkgrm',
+                            'testfrost']
+    frost_readonly_methods = ['hostpubkey', 'dkgls', 'recdkgls', 'testfrost']
+    noscan_methods.extend(frost_noscan_methods)
+    readonly_methods.extend(frost_readonly_methods)
 
     if len(args) < 1:
         parser.error('Needs a wallet file or method')
-        sys.exit(EXIT_ARGERROR)
+        twisted_sys_exit(EXIT_ARGERROR)
 
     if options.mixdepth is not None and options.mixdepth < 0:
         parser.error("Must have at least one mixdepth.")
-        sys.exit(EXIT_ARGERROR)
+        twisted_sys_exit(EXIT_ARGERROR)
 
     if args[0] in noseed_methods:
         method = args[0]
@@ -1651,8 +1773,14 @@ def wallet_tool_main(wallet_root_path):
         if method in noseed_methods:
             parser.error("The method '" + method + \
                          "' is not compatible with a wallet filename.")
-            sys.exit(EXIT_ARGERROR)
+            twisted_sys_exit(EXIT_ARGERROR)
 
+        config = jm_single().config
+        if config.has_option('POLICY', 'frost'):
+            policy_frost = config.get("POLICY", "frost")
+            if policy_frost == 'true':
+                readonly_methods.remove('display')
+                readonly_methods.remove('displayall')
         read_only = method in readonly_methods
 
         #special case needed for fidelity bond burner outputs
@@ -1660,15 +1788,29 @@ def wallet_tool_main(wallet_root_path):
         if options.recoversync:
             read_only = False
 
-        wallet = open_test_wallet_maybe(
+        if method in frost_load_dkg_methods:
+            load_dkg = True
+            read_only = True
+            dkg_read_only = True if method in frost_readonly_methods else False
+        else:
+            load_dkg = False
+            dkg_read_only = True
+        wallet = await open_test_wallet_maybe(
             wallet_path, seed, options.mixdepth, read_only=read_only,
+            load_dkg=load_dkg, dkg_read_only=dkg_read_only,
             wallet_password_stdin=options.wallet_password_stdin, gap_limit=options.gaplimit)
 
         # this object is only to respect the layering,
         # the service will not be started since this is a synchronous script:
         wallet_service = WalletService(wallet)
         if wallet_service.rpc_error:
-            sys.exit(EXIT_FAILURE)
+            twisted_sys_exit(EXIT_FAILURE)
+
+        if (isinstance(wallet, FrostWallet) and
+                method not in frost_load_dkg_methods):
+            ipc_client = FrostIPCClient(wallet)
+            await ipc_client.async_init()
+            wallet.set_ipc_client(ipc_client)
 
         if method not in noscan_methods and jm_single().bc_interface is not None:
             # if nothing was configured, we override bitcoind's options so that
@@ -1676,41 +1818,42 @@ def wallet_tool_main(wallet_root_path):
             if 'listunspent_args' not in jm_single().config.options('POLICY'):
                 jm_single().config.set('POLICY','listunspent_args', '[0]')
             while True:
-                if wallet_service.sync_wallet(fast = not options.recoversync):
+                if await wallet_service.sync_wallet(
+                        fast=not options.recoversync):
                     break
 
     #Now the wallet/data is prepared, execute the script according to the method
     if method == "display":
-        return wallet_display(wallet_service, options.showprivkey,
+        return await wallet_display(wallet_service, options.showprivkey,
             mixdepth=options.mixdepth)
     elif method == "displayall":
-        return wallet_display(wallet_service, options.showprivkey,
+        return await wallet_display(wallet_service, options.showprivkey,
             displayall=True, mixdepth=options.mixdepth)
     elif method == "summary":
-        return wallet_display(wallet_service, options.showprivkey,
+        return await wallet_display(wallet_service, options.showprivkey,
             summarized=True, mixdepth=options.mixdepth)
     elif method == "history":
         if not isinstance(jm_single().bc_interface, BitcoinCoreInterface):
             jmprint('showing history only available when using the Bitcoin Core ' +
                     'blockchain interface', "error")
-            sys.exit(EXIT_ARGERROR)
+            twisted_sys_exit(EXIT_ARGERROR)
         else:
-            return wallet_fetch_history(wallet_service, options)
+            return await wallet_fetch_history(wallet_service, options)
     elif method == "generate":
-        retval = wallet_generate_recover("generate", wallet_root_path,
-                                         mixdepth=options.mixdepth)
+        retval = await wallet_generate_recover(
+            "generate", wallet_root_path, mixdepth=options.mixdepth)
         return "Generated wallet OK" if retval else "Failed"
     elif method == "recover":
-        retval = wallet_generate_recover("recover", wallet_root_path,
-                                         mixdepth=options.mixdepth)
+        retval = await wallet_generate_recover(
+            "recover", wallet_root_path, mixdepth=options.mixdepth)
         return "Recovered wallet OK" if retval else "Failed"
     elif method == "changepass":
         retval = wallet_change_passphrase(wallet_service)
         return "Changed encryption passphrase OK" if retval else "Failed"
     elif method == "showutxos":
-        return wallet_showutxos(wallet_service,
-                                showprivkey=options.showprivkey,
-                                limit_mixdepth=options.mixdepth)
+        return await wallet_showutxos(wallet_service,
+                                      showprivkey=options.showprivkey,
+                                      limit_mixdepth=options.mixdepth)
     elif method == "showseed":
         return wallet_showseed(wallet_service)
     elif method == "dumpprivkey":
@@ -1719,46 +1862,126 @@ def wallet_tool_main(wallet_root_path):
         #note: must be interactive (security)
         if options.mixdepth is None:
             parser.error("You need to specify a mixdepth with -m")
-        wallet_importprivkey(wallet_service, options.mixdepth)
+        await wallet_importprivkey(wallet_service, options.mixdepth)
         return "Key import completed."
     elif method == "signmessage":
         if len(args) < 3:
             jmprint('Must provide message to sign', "error")
-            sys.exit(EXIT_ARGERROR)
-        return wallet_signmessage(wallet_service, options.hd_path, args[2])
+            twisted_sys_exit(EXIT_ARGERROR)
+        return await wallet_signmessage(
+            wallet_service, options.hd_path, args[2])
     elif method == "signpsbt":
         if len(args) < 3:
             jmprint("Must provide PSBT to sign", "error")
-            sys.exit(EXIT_ARGERROR)
-        return wallet_signpsbt(wallet_service, args[2])
+            twisted_sys_exit(EXIT_ARGERROR)
+        return await wallet_signpsbt(wallet_service, args[2])
     elif method == "freeze":
-        return wallet_freezeutxo(wallet_service, options.mixdepth)
+        return await wallet_freezeutxo(wallet_service, options.mixdepth)
     elif method == "gettimelockaddress":
         if len(args) < 3:
             jmprint('Must have locktime value yyyy-mm. For example 2021-03', "error")
-            sys.exit(EXIT_ARGERROR)
-        return wallet_gettimelockaddress(wallet_service.wallet, args[2])
+            twisted_sys_exit(EXIT_ARGERROR)
+        return await wallet_gettimelockaddress(wallet_service.wallet, args[2])
     elif method == "addtxoutproof":
         if len(args) < 3:
             jmprint('Must have txout proof, which is the output of Bitcoin '
                 + 'Core\'s RPC call gettxoutproof', "error")
-            sys.exit(EXIT_ARGERROR)
+            twisted_sys_exit(EXIT_ARGERROR)
         return wallet_addtxoutproof(wallet_service, options.hd_path, args[2])
     elif method == "createwatchonly":
         if len(args) < 2:
             jmprint("args: [master public key]", "error")
-            sys.exit(EXIT_ARGERROR)
-        return wallet_createwatchonly(wallet_root_path, args[1])
+            twisted_sys_exit(EXIT_ARGERROR)
+        return await wallet_createwatchonly(wallet_root_path, args[1])
     elif method == "setlabel":
         if len(args) < 4:
             jmprint("args: address label", "error")
-            sys.exit(EXIT_ARGERROR)
+            twisted_sys_exit(EXIT_ARGERROR)
         wallet.set_address_label(args[2], args[3])
         if args[3]:
             return "Address label set"
         else:
             return "Address label removed"
+    elif method == "servefrost":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "servefrost" used only for FROST wallets'
+        client = FROSTClient(wallet_service)
+        cfactory = JMClientProtocolFactory(client, proto_type="MAKER")
+        wallet.set_client_factory(cfactory)
+
+        async def wait_jm_up():
+            while True:
+                await asyncio.sleep(1)
+                if client.jm_up:
+                    break
+
+        start_reactor(
+            jm_single().config.get("DAEMON", "daemon_host"),
+            jm_single().config.getint("DAEMON", "daemon_port"),
+            cfactory,
+            ish=True,
+            daemon=True,
+            gui=True)
+        await wait_jm_up()
+        ipc_server = FrostIPCServer(wallet)
+        await ipc_server.async_init()
+        await ipc_server.serve_forever()
+        return
+    elif method == "testfrost":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "testfrost" used only for FROST wallets'
+        from hashlib import sha256
+        from bitcointx.core.key import XOnlyPubKey
+        msg = 'testmsg'
+        md = address_type = index = 0
+        msghash = sha256(msg.encode()).digest()
+        sig, pubkey, tweaked_pubkey = await wallet.ipc_client.frost_sign(
+            md, address_type, index, msghash)
+        verify_pubkey = XOnlyPubKey(tweaked_pubkey[1:])
+        if verify_pubkey.verify_schnorr(msghash, sig):
+            return "Schnorr signature successfully verified"
+        else:
+            jmprint("Schnorr signature verify failed", "error")
+        return
+    elif method == "hostpubkey":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "hostpubkey" used only for FROST wallets'
+        hostseckey = wallet._hostseckey
+        if hostseckey:
+            hostpubkey = hostpubkey_gen(hostseckey[:32])
+            return hostpubkey.hex()
+        else:
+            return 'No hostseckey available'
+    elif method == "dkgrecover":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "dkgrecover" used only for FROST wallets'
+        dkgrec_path = args[2]
+        return await wallet_service.dkg.dkg_recover(dkgrec_path)
+    elif method == "dkgls":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "dkgls" used only for FROST wallets'
+        return wallet_service.dkg.dkg_ls()
+    elif method == "dkgrm":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "dkgrm" used only for FROST wallets'
+        session_ids = args[2:]
+        if not session_ids:
+            return jmprint("no session ids specified", "error")
+        session_ids = list(dict.fromkeys(session_ids))  # make unique
+        return wallet_service.dkg.dkg_rm(session_ids)
+    elif method == "recdkgls":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "recdkgls" used only for FROST wallets'
+        return wallet_service.dkg.recdkg_ls()
+    elif method == "recdkgrm":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "recdkgrm" used only for FROST wallets'
+        session_ids = args[2:]
+        if not session_ids:
+            return jmprint("no session ids specified", "error")
+        session_ids = list(dict.fromkeys(session_ids))  # make unique
+        return wallet_service.dkg.recdkg_rm(session_ids)
     else:
         parser.error("Unknown wallet-tool method: " + method)
-        sys.exit(EXIT_ARGERROR)
+        twisted_sys_exit(EXIT_ARGERROR)
 

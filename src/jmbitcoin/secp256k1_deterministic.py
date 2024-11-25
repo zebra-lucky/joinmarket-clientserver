@@ -97,6 +97,10 @@ def bip32_master_key(seed, vbytes=MAINNET_PRIVATE):
     return bip32_serialize((vbytes, 0, b'\x00' * 4, 0, I[32:], I[:32] + b'\x01'
                            ))
 
+def hostseckey_from_entropy(seed):
+    return hmac.new("Bitcoin seed".encode("utf-8"),
+                    seed, hashlib.sha256).digest() + b'\x01'
+
 def bip32_extract_key(data):
     return bip32_deserialize(data)[-1]
 

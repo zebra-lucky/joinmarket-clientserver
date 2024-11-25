@@ -23,6 +23,14 @@ EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 EXIT_ARGERROR = 2
 
+
+def twisted_sys_exit(status):
+    from twisted.internet import reactor
+    if reactor.running:
+        reactor.stop()
+    sys.exit(status)
+
+
 # optparse munges description paragraphs. We sometimes
 # don't want that.
 class IndentedHelpFormatterWithNL(IndentedHelpFormatter):
@@ -224,7 +232,7 @@ def lookup_appdata_folder(appname):
                                    appname) + '/'
         else:
             jmprint("Could not find home folder")
-            sys.exit(EXIT_FAILURE)
+            twisted_sys_exit(EXIT_FAILURE)
 
     elif 'win32' in sys.platform or 'win64' in sys.platform:
         data_folder = path.join(environ['APPDATA'], appname) + '\\'
@@ -237,7 +245,7 @@ def get_jm_version_str():
 
 def print_jm_version(option, opt_str, value, parser):
     print(get_jm_version_str())
-    sys.exit(EXIT_SUCCESS)
+    twisted_sys_exit(EXIT_SUCCESS)
 
 # helper functions for conversions of format between over-the-wire JM
 # and internal. See details in hexbin() docstring.
@@ -300,6 +308,22 @@ def hexbin(func):
             else:
                 newargs.append(_convert(arg))
         return func(inst, *newargs, **kwargs)
+
+    return func_wrapper
+
+
+def async_hexbin(func):
+    @wraps(func)
+    async def func_wrapper(inst, *args, **kwargs):
+        newargs = []
+        for arg in args:
+            if isinstance(arg, (list, tuple)):
+                newargs.append(listchanger(arg))
+            elif isinstance(arg, dict):
+                newargs.append(dictchanger(arg))
+            else:
+                newargs.append(_convert(arg))
+        return await func(inst, *newargs, **kwargs)
 
     return func_wrapper
 

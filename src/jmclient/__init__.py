@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 
+import asyncio
 import logging
+import sys
+
+if 'twisted.internet.reactor' not in sys.modules:
+    from twisted.internet import asyncioreactor
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.set_debug(False)
+    asyncioreactor.install(asyncio_loop)
 
 from .support import (calc_cj_fee, choose_sweep_orders, choose_orders,
                       cheapest_order_choose, weighted_order_choose,
@@ -17,9 +26,10 @@ from .wallet import (Mnemonic, estimate_tx_fee, WalletError, BaseWallet, ImportW
                      SegwitWallet, SegwitLegacyWallet, FidelityBondMixin,
                      FidelityBondWatchonlyWallet, SegwitWalletFidelityBonds,
                      UTXOManager, WALLET_IMPLEMENTATIONS, compute_tx_locktime,
-                     UnknownAddressForLabel, TaprootWallet)
+                     UnknownAddressForLabel, TaprootWallet, FrostWallet)
 from .storage import (Argon2Hash, Storage, StorageError, RetryableStorageError,
-                      StoragePasswordError, VolatileStorage)
+                      StoragePasswordError, VolatileStorage,
+                      DKGStorage, DKGRecoveryStorage)
 from .cryptoengine import (BTCEngine, BTC_P2PKH, BTC_P2SH_P2WPKH, BTC_P2WPKH, EngineError,
                            TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WPKH, detect_script_type,
                            is_extended_public_key)
@@ -28,7 +38,7 @@ from .configure import (load_test_config, process_shutdown,
     validate_address, is_burn_destination, get_mchannels,
     get_blockchain_interface_instance, set_config, is_segwit_mode,
     is_taproot_mode, is_native_segwit_mode, JMPluginService, get_interest_rate,
-    get_bondless_makers_allowance, check_and_start_tor)
+    get_bondless_makers_allowance, check_and_start_tor, is_frost_mode)
 from .blockchaininterface import (BlockchainInterface,
                                   RegtestBitcoinCoreInterface, BitcoinCoreInterface)
 from .snicker_receiver import SNICKERError, SNICKERReceiver
@@ -63,8 +73,8 @@ from .wallet_utils import (
     wallet_change_passphrase, wallet_signmessage)
 from .wallet_service import WalletService
 from .maker import Maker
-from .yieldgenerator import YieldGenerator, YieldGeneratorBasic, ygmain, \
-     YieldGeneratorService
+from .yieldgenerator import (YieldGenerator, YieldGeneratorBasic, ygmain,
+                             YieldGeneratorService)
 from .snicker_receiver import SNICKERError, SNICKERReceiver, SNICKERReceiverService
 from .payjoin import (parse_payjoin_setup, send_payjoin,
                       JMBIP78ReceiverManager)
@@ -72,6 +82,8 @@ from .websocketserver import JmwalletdWebSocketServerFactory, \
      JmwalletdWebSocketServerProtocol
 from .wallet_rpc import JMWalletDaemon
 from .bond_calc import get_bond_values
+from .frost_clients import FROSTClient
+from .frost_ipc import FrostIPCClient
 # Set default logging handler to avoid "No handler found" warnings.
 
 try:

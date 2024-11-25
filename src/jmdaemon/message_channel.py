@@ -609,6 +609,25 @@ class MessageChannelCollection(object):
                                         on_order_fill, on_seen_auth, on_seen_tx,
                                         on_push_tx, on_commitment_seen,
                                         on_commitment_transferred)
+    # frost commands
+    def register_frost_callbacks(self,
+                                 on_dkginit=None,
+                                 on_dkgpmsg1=None,
+                                 on_dkgpmsg2=None,
+                                 on_dkgfinalized=None,
+                                 on_dkgcmsg1=None,
+                                 on_dkgcmsg2=None,
+                                 on_frostinit=None,
+                                 on_frostround1=None,
+                                 on_frostround2=None,
+                                 on_frostagg1=None):
+        for mc in self.mchannels:
+            mc.register_frost_callbacks(
+                on_dkginit,
+                on_dkgpmsg1, on_dkgpmsg2, on_dkgfinalized,
+                on_dkgcmsg1, on_dkgcmsg2,
+                on_frostinit,
+                on_frostround1, on_frostround2, on_frostagg1)
 
     def on_verified_privmsg(self, nick, message, hostid):
         """Called from daemon when message was successfully verified,
@@ -666,6 +685,17 @@ class MessageChannel(object):
         self.on_seen_auth = None
         self.on_seen_tx = None
         self.on_push_tx = None
+        # frost functions
+        self.on_dkginit = None
+        self.on_dkgpmsg1 = None
+        self.on_dkgpmsg2 = None
+        self.on_dkgfinalized = None
+        self.on_dkgcmsg1 = None
+        self.on_dkgcmsg2 = None
+        self.on_frostinit = None
+        self.on_frostround1 = None
+        self.on_frostround2 = None
+        self.on_frostagg1 = None
 
         self.daemon = None
 
@@ -771,6 +801,29 @@ class MessageChannel(object):
         self.on_push_tx = on_push_tx
         self.on_commitment_seen = on_commitment_seen
         self.on_commitment_transferred = on_commitment_transferred
+
+    # frost commands
+    def register_frost_callbacks(self,
+                                 on_dkginit=None,
+                                 on_dkgpmsg1=None,
+                                 on_dkgpmsg2=None,
+                                 on_dkgfinalized=None,
+                                 on_dkgcmsg1=None,
+                                 on_dkgcmsg2=None,
+                                 on_frostinit=None,
+                                 on_frostround1=None,
+                                 on_frostround2=None,
+                                 on_frostagg1=None):
+        self.on_dkginit = on_dkginit
+        self.on_dkgpmsg1 = on_dkgpmsg1
+        self.on_dkgpmsg2 = on_dkgpmsg2
+        self.on_dkgfinalized = on_dkgfinalized
+        self.on_dkgcmsg1 = on_dkgcmsg1
+        self.on_dkgcmsg2 = on_dkgcmsg2
+        self.on_frostinit = on_frostinit
+        self.on_frostround1 = on_frostround1
+        self.on_frostround2 = on_frostround2
+        self.on_frostagg1 = on_frostagg1
 
     def announce_orders(self, orderlines):
         self._announce_orders(orderlines)
@@ -889,7 +942,28 @@ class MessageChannel(object):
             return
         for command in commands:
             _chunks = command.split(" ")
-            if self.check_for_orders(nick, _chunks):
+            if _chunks[0] == 'dkginit':
+                try:
+                    hostpubkeyhash = _chunks[1]
+                    session_id = _chunks[2]
+                    sig = _chunks[3]
+                    if self.on_dkginit:
+                        self.on_dkginit(nick, hostpubkeyhash, session_id, sig)
+                except (ValueError, IndexError) as e:
+                    log.debug("!dkginit" + repr(e))
+                    return
+            elif _chunks[0] == 'frostinit':
+                try:
+                    hostpubkeyhash = _chunks[1]
+                    session_id = _chunks[2]
+                    sig = _chunks[3]
+                    if self.on_frostinit:
+                        self.on_frostinit(nick, hostpubkeyhash,
+                                          session_id, sig)
+                except (ValueError, IndexError) as e:
+                    log.debug("!frostinit" + repr(e))
+                    return
+            elif self.check_for_orders(nick, _chunks):
                 pass
             if self.check_for_commitments(nick, _chunks):
                 pass
@@ -1057,6 +1131,59 @@ class MessageChannel(object):
                         return
                     if self.on_push_tx:
                         self.on_push_tx(nick, tx)
+
+                # frost commands
+                elif _chunks[0] == 'dkgpmsg1':
+                    hostpubkeyhash = _chunks[1]
+                    session_id = _chunks[2]
+                    sig = _chunks[3]
+                    pmsg1 = _chunks[4]
+                    if self.on_dkgpmsg1:
+                        self.on_dkgpmsg1(nick, hostpubkeyhash, session_id, sig,
+                                         pmsg1)
+                elif _chunks[0] == 'dkgpmsg2':
+                    session_id = _chunks[1]
+                    pmsg2 = _chunks[2]
+                    if self.on_dkgpmsg2:
+                        self.on_dkgpmsg2(nick, session_id, pmsg2)
+                elif _chunks[0] == 'dkgfinalized':
+                    session_id = _chunks[1]
+                    if self.on_dkgfinalized:
+                        self.on_dkgfinalized(nick, session_id)
+                elif _chunks[0] == 'dkgcmsg1':
+                    session_id = _chunks[1]
+                    cmsg1 = _chunks[2]
+                    if self.on_dkgcmsg1:
+                        self.on_dkgcmsg1(nick, session_id, cmsg1)
+                elif _chunks[0] == 'dkgcmsg2':
+                    session_id = _chunks[1]
+                    cmsg2 = _chunks[2]
+                    ext_recovery = _chunks[3]
+                    if self.on_dkgcmsg2:
+                        self.on_dkgcmsg2(nick, session_id, cmsg2, ext_recovery)
+                elif _chunks[0] == 'frostround1':
+                    hostpubkeyhash = _chunks[1]
+                    session_id = _chunks[2]
+                    sig = _chunks[3]
+                    pub_nonce = _chunks[4]
+                    if self.on_frostround1:
+                        self.on_frostround1(
+                            nick, hostpubkeyhash, session_id, sig, pub_nonce)
+                elif _chunks[0] == 'frostagg1':
+                    session_id = _chunks[1]
+                    nonce_agg = _chunks[2]
+                    dkg_session_id = _chunks[3]
+                    ids = _chunks[4]
+                    msg = _chunks[5]
+                    if self.on_frostagg1:
+                        self.on_frostagg1(
+                            nick, session_id, nonce_agg,
+                            dkg_session_id, ids, msg)
+                elif _chunks[0] == 'frostround2':
+                    session_id = _chunks[1]
+                    partial_sig = _chunks[2]
+                    if self.on_frostround2:
+                        self.on_frostround2(nick, session_id, partial_sig)
             except (IndexError, ValueError):
                 # TODO proper error handling
                 log.debug('cj peer error TODO handle')

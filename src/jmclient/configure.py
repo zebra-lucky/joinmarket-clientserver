@@ -13,7 +13,8 @@ from typing import Any, List, Optional, Tuple
 import jmbitcoin as btc
 from jmbase.support import (get_log, joinmarket_alert, core_alert, debug_silence,
                             set_logging_level, jmprint, set_logging_color,
-                            JM_APP_NAME, lookup_appdata_folder, EXIT_FAILURE)
+                            JM_APP_NAME, lookup_appdata_folder, EXIT_FAILURE,
+                            twisted_sys_exit)
 from jmclient.jsonrpc import JsonRpc
 from jmclient.podle import set_commitment_file
 
@@ -222,6 +223,12 @@ confirm_timeout_hours = 6
 # Use segwit style wallets and transactions
 # Only set to false for old wallets, Joinmarket is now segwit only.
 segwit = true
+
+# Use Taproot P2TR SegWit wallet
+#taproot = true
+
+# Use FROST P2TR SegWit wallet
+#frost = true
 
 # Use native segwit (bech32) wallet. If set to false, p2sh-p2wkh
 # will be used when generating the addresses for this wallet.
@@ -701,7 +708,7 @@ def load_program_config(config_path: str = "", bs: Optional[str] = None,
     except UnicodeDecodeError:
         jmprint("Error loading `joinmarket.cfg`, invalid file format.",
             "info")
-        sys.exit(EXIT_FAILURE)
+        twisted_sys_exit(EXIT_FAILURE)
 
     # Hack required for bitcoin-rpc-no-history and probably others
     # (historicaly electrum); must be able to enforce a different blockchain
@@ -714,7 +721,7 @@ def load_program_config(config_path: str = "", bs: Optional[str] = None,
             configfile.write(defaultconfig)
         jmprint("Created a new `joinmarket.cfg`. Please review and adopt the "
               "settings and restart joinmarket.", "info")
-        sys.exit(EXIT_FAILURE)
+        twisted_sys_exit(EXIT_FAILURE)
 
     loglevel = global_singleton.config.get("LOGGING", "console_log_level")
     try:
@@ -952,6 +959,12 @@ def update_persist_config(section: str, name: str, value: Any) -> bool:
     with open(jm_single().config_location, "wb") as f:
         f.writelines([x.encode("utf-8") for x in newlines])
     return True
+
+def is_frost_mode() -> bool:
+    c = jm_single().config
+    if not c.has_option('POLICY', 'frost'):
+        return False
+    return c.get('POLICY', 'frost') != 'false'
 
 def is_taproot_mode() -> bool:
     c = jm_single().config

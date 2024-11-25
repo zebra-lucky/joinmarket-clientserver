@@ -1,12 +1,13 @@
 
 import sys
-from jmbase import jmprint, utxostr_to_utxo, utxo_to_utxostr, EXIT_FAILURE
+from jmbase import (jmprint, utxostr_to_utxo, utxo_to_utxostr, EXIT_FAILURE,
+                    twisted_sys_exit)
 from jmclient import jm_single, BTCEngine, BTC_P2PKH, BTC_P2SH_P2WPKH, BTC_P2WPKH
 
 
 def quit(parser, errmsg): #pragma: no cover
     parser.error(errmsg)
-    sys.exit(EXIT_FAILURE)
+    twisted_sys_exit(EXIT_FAILURE)
 
 def get_utxo_info(upriv, utxo_binary=False):
     """Verify that the input string parses correctly as (utxo, priv)
@@ -52,7 +53,7 @@ def validate_utxo_data(utxo_datas, retrieve=False, utxo_address_type="p2wpkh"):
         success, utxostr = utxo_to_utxostr(u)
         if not success:
             jmprint("Invalid utxo format: " + str(u), "error")
-            sys.exit(EXIT_FAILURE)
+            twisted_sys_exit(EXIT_FAILURE)
         jmprint('validating this utxo: ' + utxostr, "info")
         # as noted in `ImportWalletMixin` code comments, there is not
         # yet a functional auto-detection of key type from WIF, hence

@@ -21,8 +21,13 @@ specified (see help for options), in which case the proposal is
 output to stdout in the same string format: base64proposal,hexpubkey.
 """
 
+import asyncio
 import sys
 from optparse import OptionParser
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import bintohex, jmprint, hextobin, \
      EXIT_ARGERROR, EXIT_FAILURE, EXIT_SUCCESS, get_pow
 import jmbitcoin as btc
@@ -35,7 +40,7 @@ from jmclient.configure import get_log
 
 log = get_log()
 
-def main():
+async def main():
     parser = OptionParser(
         usage=
         'usage: %prog [options] walletname hex-tx input-index output-index net-transfer',
@@ -106,7 +111,7 @@ def main():
         jm_single().config.set("POLICY", "tx_fees", str(options.txfee))
     max_mix_depth = max([options.mixdepth, options.amtmixdepths - 1])
     wallet_path = get_wallet_path(wallet_name, None)
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
             wallet_path, wallet_name, max_mix_depth,
             wallet_password_stdin=options.wallet_password_stdin,
             gap_limit=options.gaplimit)
@@ -131,21 +136,21 @@ def main():
     fee_est = estimate_tx_fee(2, 3, txtype=wallet_service.get_txtype())
     amt_required = originating_tx.vout[output_index].nValue + fee_est
     
-    prop_utxo_dict = wallet_service.select_utxos(options.mixdepth,
+    prop_utxo_dict = await wallet_service.select_utxos(options.mixdepth,
                             amt_required)
     prop_utxos = list(prop_utxo_dict)
     prop_utxo_vals = [prop_utxo_dict[x] for x in prop_utxos]
     # get the private key for that utxo
     priv = wallet_service.get_key_from_addr(
-        wallet_service.script_to_addr(prop_utxo_vals[0]['script']))
+        await wallet_service.script_to_addr(prop_utxo_vals[0]['script']))
     # construct the arguments for the snicker proposal:
     our_input_utxos = [btc.CMutableTxOut(x['value'],
                         x['script']) for x in prop_utxo_vals]
 
     # destination must be a different mixdepth:
-    prop_destn_spk = wallet_service.get_new_script((
+    prop_destn_spk = await wallet_service.get_new_script((
         options.mixdepth + 1) % (wallet_service.mixdepth + 1), 1)
-    change_spk = wallet_service.get_new_script(options.mixdepth, 1)
+    change_spk = await wallet_service.get_new_script(options.mixdepth, 1)
     their_input = (txid1, output_index)
     # we also need to extract the pubkey of the chosen input from
     # the witness; we vary this depending on our wallet type:
@@ -153,7 +158,7 @@ def main():
     if not pubkey:
         log.error("Failed to extract pubkey from transaction: {}".format(msg))
         sys.exit(EXIT_FAILURE)
-    encrypted_proposal = wallet_service.create_snicker_proposal(
+    encrypted_proposal = await wallet_service.create_snicker_proposal(
             prop_utxos, their_input,
             our_input_utxos,
             originating_tx.vout[output_index],
@@ -225,6 +230,13 @@ class SNICKERPostingClient(object):
             self.proposals_with_nonce.append(preimage)
         return self.proposals_with_nonce
 
-if __name__ == "__main__":
-    main()
+
+async def _main():
+    await main()
     jmprint('done', "success")
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

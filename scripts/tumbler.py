@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
+import asyncio
 import sys
+
+import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+
 import os
 import pprint
 from twisted.python.log import startLogging
@@ -11,7 +15,8 @@ from jmclient import Taker, load_program_config, get_schedule,\
     schedule_to_text, estimate_tx_fee, restart_waiter, WalletService,\
     get_tumble_log, tumbler_taker_finished_update, check_regtest, \
     tumbler_filter_orders_callback, validate_address, get_tumbler_parser, \
-    get_max_cj_fee_values, get_total_tumble_amount, ScheduleGenerationErrorNoFunds
+    get_max_cj_fee_values, get_total_tumble_amount, \
+    ScheduleGenerationErrorNoFunds
 from jmclient.wallet_utils import DEFAULT_MIXDEPTH
 
 
@@ -20,7 +25,7 @@ from jmbase.support import get_log, jmprint, EXIT_SUCCESS, \
 
 log = get_log()
 
-def main():
+async def main():
     (options, args) = get_tumbler_parser().parse_args()
     options_org = options
     options = vars(options)
@@ -49,7 +54,8 @@ def main():
     else:
         max_mix_depth = DEFAULT_MIXDEPTH
     wallet_path = get_wallet_path(wallet_name, None)
-    wallet = open_test_wallet_maybe(wallet_path, wallet_name, max_mix_depth,
+    wallet = await open_test_wallet_maybe(
+            wallet_path, wallet_name, max_mix_depth,
             wallet_password_stdin=options_org.wallet_password_stdin)
     wallet_service = WalletService(wallet)
     if wallet_service.rpc_error:
@@ -197,6 +203,12 @@ def main():
                   jm_single().config.getint("DAEMON", "daemon_port"),
                   clientfactory, daemon=daemon)
 
-if __name__ == "__main__":
-    main()
+async def _main():
+    res = await main()
     print('done')
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

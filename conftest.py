@@ -75,7 +75,7 @@ def pytest_addoption(parser: Any) -> None:
                      default='bitcoinrpc',
                      help="the RPC username for your test bitcoin instance (default=bitcoinrpc)")
     parser.addoption("--nirc",
-                     type=int,
+                     type="int",
                      action="store",
                      default=1,
                      help="the number of local miniircd instances")

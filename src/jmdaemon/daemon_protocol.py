@@ -549,6 +549,16 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
                                               self.on_push_tx,
                                               self.on_commitment_seen,
                                               self.on_commitment_transferred)
+            self.mcc.register_frost_callbacks(self.on_dkginit,
+                                              self.on_dkgpmsg1,
+                                              self.on_dkgpmsg2,
+                                              self.on_dkgfinalized,
+                                              self.on_dkgcmsg1,
+                                              self.on_dkgcmsg2,
+                                              self.on_frostinit,
+                                              self.on_frostround1,
+                                              self.on_frostround2,
+                                              self.on_frostagg1)
             self.mcc.set_daemon(self)
         d = self.callRemote(JMInitProto,
                             nick_hash_length=NICK_HASH_LENGTH,
@@ -606,6 +616,73 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
         self.mc_shutdown()
         self.jm_state = 0
         return {'accepted': True}
+
+
+    """DKG specific responders
+    """
+    @JMDKGInit.responder
+    def on_JM_DKG_INIT(self, hostpubkeyhash, session_id, sig):
+        self.mcc.pubmsg(f'!dkginit {hostpubkeyhash} {session_id} {sig}')
+        return {'accepted': True}
+
+    @JMDKGPMsg1.responder
+    def on_JM_DKG_PMSG1(self, nick, hostpubkeyhash, session_id, sig, pmsg1):
+        msg = f'{hostpubkeyhash} {session_id} {sig} {pmsg1}'
+        self.mcc.prepare_privmsg(nick, "dkgpmsg1", msg)
+        return {'accepted': True}
+
+    @JMDKGPMsg2.responder
+    def on_JM_DKG_PMSG2(self, nick, session_id, pmsg2):
+        msg = f'{session_id} {pmsg2}'
+        self.mcc.prepare_privmsg(nick, "dkgpmsg2", msg)
+        return {'accepted': True}
+
+    @JMDKGFinalized.responder
+    def on_JM_DKG_FINALIZED(self, session_id, nick):
+        msg = f'{session_id}'
+        self.mcc.prepare_privmsg(nick, "dkgfinalized", msg)
+        return {'accepted': True}
+
+    @JMDKGCMsg1.responder
+    def on_JM_DKG_CMSG1(self, nick, session_id, cmsg1):
+        msg = f'{session_id} {cmsg1}'
+        self.mcc.prepare_privmsg(nick, "dkgcmsg1", msg)
+        return {'accepted': True}
+
+    @JMDKGCMsg2.responder
+    def on_JM_DKG_CMSG2(self, nick, session_id, cmsg2, ext_recovery):
+        msg = f'{session_id} {cmsg2} {ext_recovery}'
+        self.mcc.prepare_privmsg(nick, "dkgcmsg2", msg)
+        return {'accepted': True}
+
+
+    """FROST specific responders
+    """
+    @JMFROSTInit.responder
+    def on_JM_FROST_INIT(self, hostpubkeyhash, session_id, sig):
+        self.mcc.pubmsg(f'!frostinit {hostpubkeyhash} {session_id} {sig}')
+        return {'accepted': True}
+
+    @JMFROSTRound1.responder
+    def on_JM_FROST_ROUND1(self, nick, hostpubkeyhash,
+                           session_id, sig, pub_nonce):
+        msg = f'{hostpubkeyhash} {session_id} {sig} {pub_nonce}'
+        self.mcc.prepare_privmsg(nick, "frostround1", msg)
+        return {'accepted': True}
+
+    @JMFROSTAgg1.responder
+    def on_JM_FROST_AGG1(self, nick, session_id,
+                         nonce_agg, dkg_session_id, ids, msg):
+        msg = f'{session_id} {nonce_agg} {dkg_session_id} {ids} {msg}'
+        self.mcc.prepare_privmsg(nick, "frostagg1", msg)
+        return {'accepted': True}
+
+    @JMFROSTRound2.responder
+    def on_JM_FROST_ROUND2(self, nick, session_id, partial_sig):
+        msg = f'{session_id} {partial_sig}'
+        self.mcc.prepare_privmsg(nick, "frostround2", msg)
+        return {'accepted': True}
+
 
     """Taker specific responders
     """
@@ -736,6 +813,68 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
         """
         d = self.callRemote(JMUp)
         self.defaultCallbacks(d)
+
+    # frost commands
+    def on_dkginit(self, nick, hostpubkeyhash, session_id, sig):
+        d = self.callRemote(JMDKGInitSeen,
+                            nick=nick, hostpubkeyhash=hostpubkeyhash,
+                            session_id=session_id, sig=sig)
+        self.defaultCallbacks(d)
+
+    def on_dkgpmsg1(self, nick, hostpubkeyhash, session_id, sig, pmsg1):
+        d = self.callRemote(JMDKGPMsg1Seen,
+                            nick=nick, hostpubkeyhash=hostpubkeyhash,
+                            session_id=session_id, sig=sig, pmsg1=pmsg1)
+        self.defaultCallbacks(d)
+
+    def on_dkgpmsg2(self, nick, session_id, pmsg2):
+        d = self.callRemote(JMDKGPMsg2Seen,
+                            nick=nick, session_id=session_id, pmsg2=pmsg2)
+        self.defaultCallbacks(d)
+
+    def on_dkgfinalized(self, nick, session_id):
+        d = self.callRemote(JMDKGFinalizedSeen,
+                            nick=nick, session_id=session_id)
+        self.defaultCallbacks(d)
+
+    def on_dkgcmsg1(self, nick, session_id, cmsg1):
+        d = self.callRemote(JMDKGCMsg1Seen,
+                            nick=nick, session_id=session_id, cmsg1=cmsg1)
+        self.defaultCallbacks(d)
+
+    def on_dkgcmsg2(self, nick, session_id, cmsg2, ext_recovery):
+        d = self.callRemote(JMDKGCMsg2Seen,
+                            nick=nick, session_id=session_id, cmsg2=cmsg2,
+                            ext_recovery=ext_recovery)
+        self.defaultCallbacks(d)
+
+    def on_frostinit(self, nick, hostpubkeyhash, session_id, sig):
+        d = self.callRemote(JMFROSTInitSeen,
+                            nick=nick, hostpubkeyhash=hostpubkeyhash,
+                            session_id=session_id, sig=sig)
+        self.defaultCallbacks(d)
+
+    def on_frostround1(self, nick, hostpubkeyhash, session_id, sig, pub_nonce):
+        d = self.callRemote(JMFROSTRound1Seen,
+                            nick=nick, hostpubkeyhash=hostpubkeyhash,
+                            session_id=session_id, sig=sig,
+                            pub_nonce=pub_nonce)
+        self.defaultCallbacks(d)
+
+    def on_frostround2(self, nick, session_id, partial_sig):
+        d = self.callRemote(JMFROSTRound2Seen,
+                            nick=nick, session_id=session_id,
+                            partial_sig=partial_sig)
+        self.defaultCallbacks(d)
+
+    def on_frostagg1(self, nick, session_id,
+                     nonce_agg, dkg_session_id, ids, msg):
+        d = self.callRemote(JMFROSTAgg1Seen,
+                            nick=nick, session_id=session_id,
+                            nonce_agg=nonce_agg,
+                            dkg_session_id=dkg_session_id, ids=ids, msg=msg)
+        self.defaultCallbacks(d)
+
 
     @maker_only
     def on_orderbook_requested(self, nick, mc=None):

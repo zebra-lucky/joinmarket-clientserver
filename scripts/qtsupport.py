@@ -17,12 +17,13 @@ Qt files for the wizard for initiating a tumbler run.
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
+import asyncio
 import math, logging, qrcode, re, string
 from io import BytesIO
-from PySide2 import QtCore
+from PySide6 import QtCore
 
-from PySide2.QtGui import *
-from PySide2.QtWidgets import *
+from PySide6.QtGui import *
+from PySide6.QtWidgets import *
 
 from bitcointx.core import satoshi_to_coins
 from jmbitcoin.amount import amount_to_sat, btc_to_sat, sat_to_str
@@ -188,9 +189,13 @@ def JMQtMessageBox(obj, msg, mbtype='info', title='', detailed_text= None):
             b.setText(msg)
             b.setDetailedText(detailed_text)
             b.setStandardButtons(QMessageBox.Ok)
-            retval = b.exec_()
+            b.open(self.message_box_clicked)
         else:
             mbtypes[mbtype](obj, title, msg)
+
+    @QtCore.Slot(QMessageBox.StandardButton)
+    def message_box_clicked(self, button_id):
+        print('QMessageBox.StandardButton', button_id)
 
 class QtHandler(logging.Handler):
 
@@ -1040,7 +1045,7 @@ class ReceiveBIP78Dialog(QDialog):
         self.qr_btn.setVisible(False)
         self.btnbox.button(QDialogButtonBox.Cancel).setDisabled(True)
 
-    def start_generate(self):
+    async def start_generate(self):
         """ Before starting up the
         hidden service and initiating the payment
         workflow, disallow starting again; user
@@ -1049,7 +1054,7 @@ class ReceiveBIP78Dialog(QDialog):
         aborted, we reset the generate button.
         """
         self.generate_btn.setDisabled(True)
-        if not self.action_fn():
+        if not await self.action_fn():
             self.generate_btn.setDisabled(False)
 
     def get_receive_bip78_dialog(self):
@@ -1110,7 +1115,8 @@ class ReceiveBIP78Dialog(QDialog):
         # it is also associated with 'rejection' (and we don't use "OK" because
         # concept doesn't quite fit here:
         self.btnbox.rejected.connect(self.shutdown_actions)
-        self.generate_btn.clicked.connect(self.start_generate)
+        self.generate_btn.clicked.connect(
+            lambda: asyncio.create_task(self.start_generate()))
         self.qr_btn.clicked.connect(self.open_qr_code_popup)
         # does not trigger cancel_fn callback:
         self.close_btn.clicked.connect(self.close)

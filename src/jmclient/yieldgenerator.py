@@ -1,5 +1,6 @@
 #! /usr/bin/env python
 
+import asyncio
 import datetime
 import os
 import time
@@ -14,11 +15,16 @@ from jmclient import (Maker, jm_single, load_program_config,
                       JMClientProtocolFactory, start_reactor, calc_cj_fee,
                       WalletService, add_base_options, SNICKERReceiver,
                       SNICKERClientProtocolFactory, FidelityBondMixin,
-                      get_interest_rate, fmt_utxo, check_and_start_tor)
+                      get_interest_rate, fmt_utxo, check_and_start_tor,
+                      FrostWallet)
 from .wallet_utils import open_test_wallet_maybe, get_wallet_path
-from jmbase.support import EXIT_ARGERROR, EXIT_FAILURE, get_jm_version_str
+from jmbase.support import (EXIT_ARGERROR, EXIT_FAILURE, get_jm_version_str,
+                            twisted_sys_exit)
 import jmbitcoin as btc
 from jmclient.fidelity_bond import FidelityBond
+
+from .frost_ipc import FrostIPCClient
+
 
 jlog = get_log()
 
@@ -127,7 +133,7 @@ class YieldGeneratorBasic(YieldGenerator):
 
         return [order]
 
-    def get_fidelity_bond_template(self):
+    async def get_fidelity_bond_template(self):
         if not isinstance(self.wallet_service.wallet, FidelityBondMixin):
             jlog.info("Not a fidelity bond wallet, not announcing fidelity bond")
             return None
@@ -140,8 +146,10 @@ class YieldGeneratorBasic(YieldGenerator):
         CERT_MAX_VALIDITY_TIME = 1
         cert_expiry = ((blocks + BLOCK_COUNT_SAFETY) // RETARGET_INTERVAL) + CERT_MAX_VALIDITY_TIME
 
-        utxos = self.wallet_service.wallet.get_utxos_by_mixdepth(include_disabled=True,
-            includeheight=True)[FidelityBondMixin.FIDELITY_BOND_MIXDEPTH]
+        _utxos = await self.wallet_service.wallet.get_utxos_by_mixdepth(
+            include_disabled=True,
+            includeheight=True)
+        utxos = _utxos[FidelityBondMixin.FIDELITY_BOND_MIXDEPTH]
         timelocked_utxos = [(outpoint, info) for outpoint, info in utxos.items()
             if FidelityBondMixin.is_timelocked_path(info["path"])]
         if len(timelocked_utxos) == 0:
@@ -171,7 +179,7 @@ class YieldGeneratorBasic(YieldGenerator):
         jlog.info("Announcing fidelity bond coin {}".format(fmt_utxo(utxo)))
         return fidelity_bond
 
-    def oid_to_order(self, offer, amount):
+    async def oid_to_order(self, offer, amount):
         total_amount = amount + offer["txfee"]
         real_cjfee = calc_cj_fee(offer["ordertype"], offer["cjfee"], amount)
         required_amount = total_amount + \
@@ -186,7 +194,7 @@ class YieldGeneratorBasic(YieldGenerator):
         jlog.debug('mix depths that have enough = ' + str(filtered_mix_balance))
 
         try:
-            mixdepth, utxos = self._get_order_inputs(
+            mixdepth, utxos = await self._get_order_inputs(
                 filtered_mix_balance, offer, required_amount)
         except NoIoauthInputException:
             jlog.error(
@@ -198,16 +206,17 @@ class YieldGeneratorBasic(YieldGenerator):
 
         jlog.info('filling offer, mixdepth=' + str(mixdepth) + ', amount=' + str(amount))
 
-        cj_addr = self.select_output_address(mixdepth, offer, amount)
+        cj_addr = await self.select_output_address(mixdepth, offer, amount)
         if cj_addr is None:
             return None, None, None
         jlog.info('sending output to address=' + str(cj_addr))
 
         change_amount = sum(u["value"] for u in utxos.values()) - total_amount + real_cjfee
-        change_addr = self.select_change_address(mixdepth, change_amount)
+        change_addr = await self.select_change_address(mixdepth, change_amount)
         return utxos, cj_addr, change_addr
 
-    def _get_order_inputs(self, filtered_mix_balance, offer, required_amount):
+    async def _get_order_inputs(self, filtered_mix_balance,
+                                offer, required_amount):
         """
         Select inputs from some applicable mixdepth that has a utxo suitable
         for ioauth.
@@ -226,7 +235,7 @@ class YieldGeneratorBasic(YieldGenerator):
         while filtered_mix_balance:
             mixdepth = self.select_input_mixdepth(
                 filtered_mix_balance, offer, required_amount)
-            utxos = self.wallet_service.select_utxos(
+            utxos = await self.wallet_service.select_utxos(
                 mixdepth, required_amount, minconfs=1, includeaddr=True,
                 require_auth_address=True)
             if utxos:
@@ -263,19 +272,21 @@ class YieldGeneratorBasic(YieldGenerator):
         available = sorted(available.items(), key=lambda entry: entry[0])
         return available[0][0]
 
-    def select_output_address(self, input_mixdepth, offer, amount):
+    async def select_output_address(self, input_mixdepth, offer, amount):
         """Returns the address to which the mixed output should be sent for
         an order spending from the given input mixdepth.  Can return None if
         there is no suitable output, in which case the order is
         aborted."""
         cjoutmix = (input_mixdepth + 1) % (self.wallet_service.mixdepth + 1)
-        return self.wallet_service.get_internal_addr(cjoutmix)
+        return await self.wallet_service.get_internal_addr(cjoutmix)
 
-    def select_change_address(self, input_mixdepth: int, change_amount: int) -> str:
+    async def select_change_address(self, input_mixdepth: int,
+                                    change_amount: int) -> str:
         """Returns the address to which the change should be sent for an
         order spending from the given input mixdepth.  Must not return
         None."""
-        return self.wallet_service.get_internal_addr(input_mixdepth)
+        return await self.wallet_service.get_internal_addr(input_mixdepth)
+
 
 class YieldGeneratorService(Service):
     def __init__(self, wallet_service, daemon_host, daemon_port, yg_config):
@@ -301,15 +312,20 @@ class YieldGeneratorService(Service):
             # we do not catch Exceptions in setup,
             # deliberately; this must be caught and distinguished
             # by whoever started the service.
-            setup()
+            if asyncio.iscoroutine(setup):
+                raise NotImplementedError()  # FIXME
+            else:
+                setup()
 
         # TODO genericise to any YG class:
         self.yieldgen = YieldGeneratorBasic(self.wallet_service, self.yg_config)
         self.clientfactory = JMClientProtocolFactory(self.yieldgen, proto_type="MAKER")
+        wallet = self.wallet_service.wallet
         # here 'start_reactor' does not start the reactor but instantiates
         # the connection to the daemon backend; note daemon=False, i.e. the daemon
         # backend is assumed to be started elsewhere; we just connect to it with a client.
-        start_reactor(self.daemon_host, self.daemon_port, self.clientfactory, rs=False)
+        start_reactor(self.daemon_host, self.daemon_port, self.clientfactory,
+                      rs=False, gui=True)
         # monitor the Maker object, just to check if it's still in an "up" state, marked
         # by the aborted instance var:
         self.monitor_loop = task.LoopingCall(self.monitor)
@@ -351,7 +367,7 @@ class YieldGeneratorService(Service):
     def isRunning(self):
         return self.running == 1
 
-def ygmain(ygclass, nickserv_password='', gaplimit=6):
+async def ygmain(ygclass, nickserv_password='', gaplimit=6):
     import sys
 
     parser = OptionParser(usage='usage: %prog [options] [wallet file]')
@@ -406,7 +422,7 @@ def ygmain(ygclass, nickserv_password='', gaplimit=6):
     options = vars(options)
     if len(args) < 1:
         parser.error('Needs a wallet')
-        sys.exit(EXIT_ARGERROR)
+        twisted_sys_exit(EXIT_ARGERROR)
 
     load_program_config(config_path=options["datadir"])
 
@@ -437,24 +453,25 @@ def ygmain(ygclass, nickserv_password='', gaplimit=6):
     else:
         parser.error('You specified an incorrect offer type which ' +\
                      'can be either reloffer or absoffer')
-        sys.exit(EXIT_ARGERROR)
+        twisted_sys_exit(EXIT_ARGERROR)
     nickserv_password = options["password"]
 
     if jm_single().bc_interface is None:
         jlog.error("Running yield generator requires configured " +
             "blockchain source.")
-        sys.exit(EXIT_FAILURE)
+        twisted_sys_exit(EXIT_FAILURE)
 
     wallet_path = get_wallet_path(wallet_name, None)
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
         wallet_path, wallet_name, options["mixdepth"],
         wallet_password_stdin=options["wallet_password_stdin"],
         gap_limit=options["gaplimit"])
+    if isinstance(wallet, FrostWallet):
+        ipc_client = FrostIPCClient(wallet)
+        await ipc_client.async_init()
+        wallet.set_ipc_client(ipc_client)
 
     wallet_service = WalletService(wallet)
-    while not wallet_service.synced:
-        wallet_service.sync_wallet(fast=not options["recoversync"])
-    wallet_service.startService()
 
     txtype = wallet_service.get_txtype()
     if txtype == "p2tr":
@@ -467,7 +484,7 @@ def ygmain(ygclass, nickserv_password='', gaplimit=6):
         prefix = ""
     else:
         jlog.error("Unsupported wallet type for yieldgenerator: " + txtype)
-        sys.exit(EXIT_ARGERROR)
+        twisted_sys_exit(EXIT_ARGERROR)
 
     ordertype = prefix + ordertype
     jlog.debug("Set the offer type string to: " + ordertype)
@@ -483,7 +500,7 @@ def ygmain(ygclass, nickserv_password='', gaplimit=6):
                        "yet supported for yieldgenerators; either use "
                        "signet/regtest/testnet, or run SNICKER manually "
                        "with snicker/receive-snicker.py.")
-            sys.exit(EXIT_ARGERROR)
+            twisted_sys_exit(EXIT_ARGERROR)
         snicker_r = SNICKERReceiver(wallet_service)
         servers = jm_single().config.get("SNICKER", "servers").split(",")
         snicker_factory = SNICKERClientProtocolFactory(snicker_r, servers)
@@ -493,7 +510,11 @@ def ygmain(ygclass, nickserv_password='', gaplimit=6):
     daemon = True if nodaemon == 1 else False
     if jm_single().config.get("BLOCKCHAIN", "network") in ["regtest", "testnet", "signet"]:
         startLogging(sys.stdout)
+
     start_reactor(jm_single().config.get("DAEMON", "daemon_host"),
-                      jm_single().config.getint("DAEMON", "daemon_port"),
-                      clientfactory, snickerfactory=snicker_factory,
-                      daemon=daemon)
+                  jm_single().config.getint("DAEMON", "daemon_port"),
+                  clientfactory, snickerfactory=snicker_factory,
+                  daemon=daemon, gui=True)
+    while not wallet_service.synced:
+        await wallet_service.sync_wallet(fast=not options["recoversync"])
+    wallet_service.startService()

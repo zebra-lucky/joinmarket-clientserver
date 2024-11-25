@@ -32,11 +32,11 @@ Are you sure you want to continue?"""
 sweep_custom_change_warning = \
     "Custom change cannot be set while doing a sweep (zero amount)."
 
-def fmt_utxos(utxos, wallet_service, prefix=''):
+async def fmt_utxos(utxos, wallet_service, prefix=''):
     output = []
     for u in utxos:
         utxo_str = '{}{} - {}'.format(
-            prefix, fmt_utxo(u), fmt_tx_data(utxos[u], wallet_service))
+            prefix, fmt_utxo(u), await fmt_tx_data(utxos[u], wallet_service))
         output.append(utxo_str)
     return '\n'.join(output)
 
@@ -45,14 +45,15 @@ def fmt_utxo(utxo):
     assert success
     return utxostr
 
-def fmt_tx_data(tx_data, wallet_service):
+async def fmt_tx_data(tx_data, wallet_service):
     return 'path: {}, address: {} , value: {}'.format(
         wallet_service.get_path_repr(wallet_service.script_to_path(tx_data['script'])),
-        wallet_service.script_to_addr(tx_data['script']), tx_data['value'])
+        await wallet_service.script_to_addr(tx_data['script']), tx_data['value'])
 
 
-def generate_podle_error_string(priv_utxo_pairs, to, ts, wallet_service, cjamount,
-                                taker_utxo_age, taker_utxo_amtpercent):
+async def generate_podle_error_string(priv_utxo_pairs, to, ts, wallet_service,
+                                      cjamount, taker_utxo_age,
+                                      taker_utxo_amtpercent):
     """Gives detailed error information on why commitment sourcing failed.
     """
     errmsg = ""
@@ -93,9 +94,10 @@ def generate_podle_error_string(priv_utxo_pairs, to, ts, wallet_service, cjamoun
                "with 'python add-utxo.py --help'\n\n")
     errmsg += ("***\nFor reference, here are the utxos in your wallet:\n")
 
-    for md, utxos in wallet_service.get_utxos_by_mixdepth().items():
+    _utxos = await wallet_service.get_utxos_by_mixdepth()
+    for md, utxos in _utxos.items():
         if not utxos:
             continue
         errmsg += ("\nmixdepth {}:\n{}".format(
-            md, fmt_utxos(utxos, wallet_service, prefix='    ')))
+            md, await fmt_utxos(utxos, wallet_service, prefix='    ')))
     return (errmsgheader, errmsg)

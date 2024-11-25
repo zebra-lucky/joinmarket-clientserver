@@ -7,9 +7,12 @@ For notes, see scripts/README.md; in particular, note the use
 of "schedules" with the -S flag.
 """
 
+import asyncio
 import sys
-from twisted.internet import reactor
 import pprint
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
 
 from jmclient import Taker, load_program_config, get_schedule,\
     JMClientProtocolFactory, start_reactor, validate_address, is_burn_destination, \
@@ -18,7 +21,7 @@ from jmclient import Taker, load_program_config, get_schedule,\
     get_sendpayment_parser, get_max_cj_fee_values, check_regtest, \
     parse_payjoin_setup, send_payjoin, general_custom_change_warning, \
     nonwallet_custom_change_warning, sweep_custom_change_warning, \
-    EngineError, check_and_start_tor
+    EngineError, check_and_start_tor, FrostWallet, FrostIPCClient
 from twisted.python.log import startLogging
 from jmbase.support import get_log, jmprint, \
     EXIT_FAILURE, EXIT_ARGERROR, cli_prompt_user_yesno
@@ -50,7 +53,7 @@ def pick_order(orders, n): #pragma: no cover
             return orders[pickedOrderIndex]
         pickedOrderIndex = -1
 
-def main():
+async def main():
     parser = get_sendpayment_parser()
     (options, args) = parser.parse_args()
     load_program_config(config_path=options.datadir)
@@ -191,17 +194,21 @@ def main():
     max_mix_depth = max([mixdepth, options.amtmixdepths - 1])
 
     wallet_path = get_wallet_path(wallet_name, None)
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
         wallet_path, wallet_name, max_mix_depth,
         wallet_password_stdin=options.wallet_password_stdin,
         gap_limit=options.gaplimit)
     wallet_service = WalletService(wallet)
     if wallet_service.rpc_error:
         sys.exit(EXIT_FAILURE)
+    if isinstance(wallet, FrostWallet):
+        ipc_client = FrostIPCClient(wallet)
+        await ipc_client.async_init()
+        wallet.set_ipc_client(ipc_client)
     # in this script, we need the wallet synced before
     # logic processing for some paths, so do it now:
     while not wallet_service.synced:
-        wallet_service.sync_wallet(fast=not options.recoversync)
+        await wallet_service.sync_wallet(fast=not options.recoversync)
     # the sync call here will now be a no-op:
     wallet_service.startService()
 
@@ -270,13 +277,13 @@ def main():
                     sys.exit(EXIT_ARGERROR)
 
     if options.makercount == 0 and not bip78url:
-        tx = direct_send(wallet_service, mixdepth,
-                         [(destaddr, amount)],
-                         options.answeryes,
-                         with_final_psbt=options.with_psbt,
-                         optin_rbf=not options.no_rbf,
-                         custom_change_addr=custom_change,
-                         change_label=options.changelabel)
+        tx = await direct_send(wallet_service, mixdepth,
+                               [(destaddr, amount)],
+                               options.answeryes,
+                               with_final_psbt=options.with_psbt,
+                               optin_rbf=not options.no_rbf,
+                               custom_change_addr=custom_change,
+                               change_label=options.changelabel)
         if options.with_psbt:
             log.info("This PSBT is fully signed and can be sent externally for "
                      "broadcasting:")
@@ -309,11 +316,14 @@ def main():
                 return False
         return True
 
+    asyncio_loop = asyncio.get_event_loop()
+    taker_finished_future = asyncio_loop.create_future()
+
     def taker_finished(res, fromtx=False, waittime=0.0, txdetails=None):
         if fromtx == "unconfirmed":
             #If final entry, stop *here*, don't wait for confirmation
             if taker.schedule_index + 1 == len(taker.schedule):
-                reactor.stop()
+                taker_finished_future.set_result(True)
             return
         if fromtx:
             if res:
@@ -334,7 +344,7 @@ def main():
                     #can only happen with < minimum_makers; see above.
                     log.info("A transaction failed but there are insufficient "
                              "honest respondants to continue; giving up.")
-                    reactor.stop()
+                    taker_finished_future.set_result(False)
                     return
                 #This is Phase 2; do we have enough to try again?
                 taker.add_honest_makers(list(set(
@@ -344,7 +354,7 @@ def main():
                     "POLICY", "minimum_makers"):
                     log.info("Too few makers responded honestly; "
                              "giving up this attempt.")
-                    reactor.stop()
+                    taker_finished_future.set_result(False)
                     return
                 jmprint("We failed to complete the transaction. The following "
                       "makers responded honestly: " + str(taker.honest_makers) +\
@@ -364,11 +374,12 @@ def main():
         else:
             if not res:
                 log.info("Did not complete successfully, shutting down")
+                taker_finished_future.set_result(False)
             #Should usually be unreachable, unless conf received out of order;
             #because we should stop on 'unconfirmed' for last (see above)
             else:
                 log.info("All transactions completed correctly")
-            reactor.stop()
+                taker_finished_future.set_result(True)
 
     nodaemon = jm_single().config.getint("DAEMON", "no_daemon")
     daemon = True if nodaemon == 1 else False
@@ -379,7 +390,8 @@ def main():
         manager = parse_payjoin_setup(args[1], wallet_service, options.mixdepth)
         reactor.callWhenRunning(send_payjoin, manager)
         # JM is default, so must be switched off explicitly in this call:
-        start_reactor(dhost, dport, bip78=True, jm_coinjoin=False, daemon=daemon)
+        start_reactor(dhost, dport, bip78=True, jm_coinjoin=False,
+                      daemon=daemon, gui=True)
         return
 
     else:
@@ -394,8 +406,17 @@ def main():
 
     if jm_single().config.get("BLOCKCHAIN", "network") == "regtest":
         startLogging(sys.stdout)
-    start_reactor(dhost, dport, clientfactory, daemon=daemon)
+    start_reactor(dhost, dport, clientfactory, daemon=daemon, gui=True)
+    await taker_finished_future
+
+
+async def _main():
+    await main()
+    jmprint('done', "success")
+    reactor.stop()
+
 
 if __name__ == "__main__":
-    main()
-    jmprint('done', "success")
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

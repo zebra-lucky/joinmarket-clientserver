@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
+
+import asyncio
 import sys
 from datetime import datetime
 from decimal import Decimal
 from json import loads
 from optparse import OptionParser
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
 
 from jmbase import EXIT_ARGERROR, jmprint, get_log, utxostr_to_utxo, EXIT_FAILURE
 from jmbitcoin import amount_to_sat, amount_to_str
@@ -24,7 +29,7 @@ with the fidelity bonds in the orderbook.
 log = get_log()
 
 
-def main() -> None:
+async def main() -> None:
     parser = OptionParser(
         usage="usage: %prog [options] UTXO or amount",
         description=DESCRIPTION,
@@ -128,5 +133,11 @@ def main() -> None:
             jmprint(f"Top {result['percentile']}% of the orderbook by value")
 
 
+async def _main():
+    await main()
+
+
 if __name__ == "__main__":
-    main()
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

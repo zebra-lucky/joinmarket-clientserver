@@ -371,7 +371,7 @@ class JMPayjoinManager(object):
         else:
             self.pj_state = self.JM_PJ_PAYJOIN_BROADCAST_FAILED
 
-    def select_receiver_utxos(self):
+    async def select_receiver_utxos(self):
         # Receiver chooses own inputs:
         # For earlier ideas about more complex algorithms, see the gist comment here:
         # https://gist.github.com/AdamISZ/4551b947789d3216bacfcb7af25e029e#gistcomment-2799709
@@ -389,7 +389,7 @@ class JMPayjoinManager(object):
 
         self.user_info_callback("Choosing one coin at random")
         try:
-            my_utxos = self.wallet_service.select_utxos(
+            my_utxos = await self.wallet_service.select_utxos(
                 self.mixdepth, jm_single().DUST_THRESHOLD,
                 select_fn=select_one_utxo, minconfs=1)
         except Exception as e:
@@ -473,7 +473,7 @@ def get_max_additional_fee_contribution(manager):
                   "contribution of: " + str(max_additional_fee_contribution))
     return max_additional_fee_contribution
 
-def make_payment_psbt(manager, accept_callback=None, info_callback=None):
+async def make_payment_psbt(manager, accept_callback=None, info_callback=None):
     """ Creates a valid payment transaction and PSBT for it,
     and adds it to the JMPayjoinManager instance passed as argument.
     Wallet should already be synced before calling here.
@@ -482,12 +482,12 @@ def make_payment_psbt(manager, accept_callback=None, info_callback=None):
     # we can create a standard payment, but have it returned as a PSBT.
     assert isinstance(manager, JMPayjoinManager)
     assert manager.wallet_service.synced
-    payment_psbt = direct_send(manager.wallet_service,
-                               manager.mixdepth,
-                               [(str(manager.destination), manager.amount)],
-                               accept_callback=accept_callback,
-                               info_callback=info_callback,
-                               with_final_psbt=True)
+    payment_psbt = await direct_send(
+        manager.wallet_service, manager.mixdepth,
+        [(str(manager.destination), manager.amount)],
+        accept_callback=accept_callback,
+        info_callback=info_callback,
+        with_final_psbt=True)
     if not payment_psbt:
         return (False, "could not create non-payjoin payment")
 
@@ -527,7 +527,7 @@ def make_payjoin_request_params(manager):
 
     return params
 
-def send_payjoin(manager, accept_callback=None,
+async def send_payjoin(manager, accept_callback=None,
                  info_callback=None, return_deferred=False):
     """ Given a JMPayjoinManager object `manager`, initialised with the
     payment request data from the server, use its wallet_service to construct
@@ -542,7 +542,8 @@ def send_payjoin(manager, accept_callback=None,
      asynchronously) - the `manager` object can be inspected for more detail.
     (False, errormsg) in case of failure.
     """
-    success, errmsg = make_payment_psbt(manager, accept_callback, info_callback)
+    success, errmsg = await make_payment_psbt(
+        manager, accept_callback, info_callback)
     if not success:
         return (False, errmsg)
 
@@ -601,7 +602,7 @@ def process_error_from_server(errormsg, errorcode, manager):
     fallback_nonpayjoin_broadcast(errormsg.encode("utf-8"), manager)
     return
 
-def process_payjoin_proposal_from_server(response_body, manager):
+async def process_payjoin_proposal_from_server(response_body, manager):
     assert isinstance(manager, JMPayjoinManager)
     try:
         payjoin_proposal_psbt = \
@@ -621,7 +622,7 @@ def process_payjoin_proposal_from_server(response_body, manager):
                         payjoin_proposal_psbt.set_utxo(
                             manager.initial_psbt.inputs[j].utxo, i,
                             force_witness_utxo=True)
-    signresultandpsbt, err = manager.wallet_service.sign_psbt(
+    signresultandpsbt, err = await manager.wallet_service.sign_psbt(
         payjoin_proposal_psbt.serialize(), with_sign_result=True)
     if err:
         log.error("Failed to sign PSBT from the receiver, error: " + err)
@@ -678,7 +679,7 @@ class PayjoinConverter(object):
         self.info_callback = info_callback
         super().__init__()
 
-    def request_to_psbt(self, payment_psbt_base64, sender_parameters):
+    async def request_to_psbt(self, payment_psbt_base64, sender_parameters):
         """ Takes a payment psbt from a sender and their url parameters,
         and returns a new payment PSBT proposal, assuming all conditions
         are met.
@@ -756,7 +757,7 @@ class PayjoinConverter(object):
                                                 fallback_nonpayjoin_broadcast,
                                                 b"timeout", self.manager)
 
-        receiver_utxos = self.manager.select_receiver_utxos()
+        receiver_utxos = await self.manager.select_receiver_utxos()
         if not receiver_utxos:
             return (False, "Could not select coins for payjoin",
                     "unavailable")
@@ -888,13 +889,14 @@ class PayjoinConverter(object):
         log.debug("We created this unsigned tx: ")
         log.debug(btc.human_readable_transaction(unsigned_payjoin_tx))
 
-        r_payjoin_psbt = self.wallet_service.create_psbt_from_tx(unsigned_payjoin_tx,
-                                                      spent_outs=spent_outs)
+        r_payjoin_psbt = await self.wallet_service.create_psbt_from_tx(
+            unsigned_payjoin_tx, spent_outs=spent_outs)
         log.debug("Receiver created payjoin PSBT:\n{}".format(
             self.wallet_service.human_readable_psbt(r_payjoin_psbt)))
 
-        signresultandpsbt, err = self.wallet_service.sign_psbt(r_payjoin_psbt.serialize(),
-                                                    with_sign_result=True)
+        signresultandpsbt, err = \
+            await self.wallet_service.sign_psbt(
+                r_payjoin_psbt.serialize(), with_sign_result=True)
         assert not err, err
         signresult, receiver_signed_psbt = signresultandpsbt
         assert signresult.num_inputs_final == len(receiver_utxos)
@@ -965,13 +967,16 @@ class JMBIP78ReceiverManager(object):
         self.shutdown_callback = shutdown_callback
         self.receiving_address = None
         self.mode = mode
-        self.get_receiving_address()
+
+    async def async_init(self, wallet_service, mixdepth, amount,
+                         mode="command-line"):
+        await self.get_receiving_address()
         self.manager = JMPayjoinManager(wallet_service, mixdepth,
                                         self.receiving_address, amount,
                                         mode=mode,
                                         user_info_callback=self.info_callback)
 
-    def initiate(self):
+    async def initiate(self):
         """ Called at reactor start to start up hidden service
         and provide uri string to sender.
         """
@@ -980,7 +985,7 @@ class JMBIP78ReceiverManager(object):
         # HTTP request simply doesn't arrive. Note also that the
         # "params" argument is None as this is only learnt from request.
         factory = BIP78ClientProtocolFactory(self, None,
-                self.receive_proposal_from_sender, None,
+                await self.receive_proposal_from_sender, None,
                 mode="receiver")
         h = jm_single().config.get("DAEMON", "daemon_host")
         p = jm_single().config.getint("DAEMON", "daemon_port")-2000
@@ -992,21 +997,21 @@ class JMBIP78ReceiverManager(object):
     def default_info_callback(self, msg):
         jmprint(msg)
 
-    def get_receiving_address(self):
+    async def get_receiving_address(self):
         # the receiving address is sourced from the 'next' mixdepth
         # to avoid clustering of input and output:
         next_mixdepth = (self.mixdepth + 1) % (
             self.wallet_service.wallet.mixdepth + 1)
         self.receiving_address = btc.CCoinAddress(
-            self.wallet_service.get_internal_addr(next_mixdepth))
+            await self.wallet_service.get_internal_addr(next_mixdepth))
 
-    def receive_proposal_from_sender(self, body, params):
+    async def receive_proposal_from_sender(self, body, params):
         """ Accepts the contents of the HTTP request from the sender
         and returns a payjoin proposal, or an error.
         """
         self.pj_converter = PayjoinConverter(self.manager,
                             self.shutdown, self.info_callback)
-        success, a, b = self.pj_converter.request_to_psbt(body, params)
+        success, a, b = await self.pj_converter.request_to_psbt(body, params)
         if not success:
             return (False, a, b)
         else:

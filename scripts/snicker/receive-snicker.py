@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 
+import asyncio
 from optparse import OptionParser
 import sys
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import get_log, jmprint
 from jmclient import (jm_single, load_program_config, WalletService,
                       open_test_wallet_maybe, get_wallet_path,
@@ -12,7 +17,7 @@ from jmbase.support import EXIT_ARGERROR
 
 jlog = get_log()
 
-def receive_snicker_main():
+async def receive_snicker_main():
     usage = """ Use this script to receive proposals for SNICKER
 coinjoins, parse them and then broadcast coinjoins
 that fit your criteria. See the SNICKER section of
@@ -62,7 +67,7 @@ Usage: %prog [options] wallet file [proposal]
 
     wallet_path = get_wallet_path(wallet_name, None)
     max_mix_depth = max([options.mixdepth, options.amtmixdepths - 1])
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
         wallet_path, wallet_name, max_mix_depth,
         wallet_password_stdin=options.wallet_password_stdin,
         gap_limit=options.gaplimit)
@@ -77,7 +82,7 @@ Usage: %prog [options] wallet file [proposal]
     snicker_r = SNICKERReceiver(wallet_service)
     if options.no_upload:
         proposal = args[1]
-        snicker_r.process_proposals([proposal])
+        await snicker_r.process_proposals([proposal])
         return
     servers = jm_single().config.get("SNICKER", "servers").split(",")
     snicker_pf = SNICKERClientProtocolFactory(snicker_r, servers, oneshot=True)
@@ -86,6 +91,14 @@ Usage: %prog [options] wallet file [proposal]
                   None, snickerfactory=snicker_pf,
                   daemon=daemon)
 
-if __name__ == "__main__":
-    receive_snicker_main()
+
+async def _main():
+    await receive_snicker_main()
     jmprint('done')
+    reactor.stop()
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

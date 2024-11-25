@@ -1,4 +1,8 @@
 #! /usr/bin/env python
+
+import asyncio
+import base64
+import time
 from twisted.internet import protocol, reactor, task
 from twisted.internet.error import (ConnectionLost, ConnectionAborted,
                                     ConnectionClosed, ConnectionDone)
@@ -7,18 +11,20 @@ try:
     from twisted.internet.ssl import ClientContextFactory
 except ImportError:
     pass
-from jmbase import commands
+from jmbase import commands, jmprint
 import binascii
 import json
 import hashlib
 import os
-import sys
 from jmbase import (get_log, EXIT_FAILURE, hextobin, bintohex,
-                    utxo_to_utxostr, bdict_sdict_convert)
+                    utxo_to_utxostr, bdict_sdict_convert, twisted_sys_exit)
+from jmclient.maker import Maker
 from jmclient import (jm_single, get_mchannels,
                       RegtestBitcoinCoreInterface,
-                      SNICKERReceiver, process_shutdown)
+                      SNICKERReceiver, process_shutdown, FrostWallet)
 import jmbitcoin as btc
+
+from .frost_clients import DKGClient
 
 # module level variable representing the port
 # on which the daemon is running.
@@ -136,8 +142,11 @@ class BIP78ClientProtocol(BaseClientProtocol):
         return {"accepted": True}
 
     @commands.BIP78SenderReceiveProposal.responder
-    def on_BIP78_SENDER_RECEIVE_PROPOSAL(self, psbt):
-        self.success_callback(psbt, self.manager)
+    async def on_BIP78_SENDER_RECEIVE_PROPOSAL(self, psbt):
+        if asyncio.iscoroutine(self.success_callback):
+            await self.success_callback(psbt, self.manager)
+        else:
+            self.success_callback(psbt, self.manager)
         return {"accepted": True}
 
     @commands.BIP78SenderReceiveError.responder
@@ -263,8 +272,8 @@ class SNICKERClientProtocol(BaseClientProtocol):
         reactor.callLater(0.0, self.process_proposals, proposals)
         return {"accepted": True}
 
-    def process_proposals(self, proposals):
-        self.client.process_proposals(proposals)
+    async def process_proposals(self, proposals):
+        await self.client.process_proposals(proposals)
         if self.oneshot:
             process_shutdown()
 
@@ -386,6 +395,301 @@ class JMClientProtocol(BaseClientProtocol):
         self.defaultCallbacks(d)
         return {'accepted': True}
 
+
+    """DKG specifics
+    """
+    async def dkg_gen(self):
+        jlog.debug(f'Coordinator call dkg_gen')
+        client = self.factory.client
+        md_type_idx = None
+        session_id = None
+        session = None
+
+        while True:
+            if md_type_idx is None:
+                md_type_idx = await client.dkg_gen()
+                if md_type_idx is None:
+                    jlog.debug('finished dkg_gen execution')
+                    break
+
+            if session_id is None:
+                session_id, _, session = self.dkg_init(*md_type_idx)
+                if session_id is None:
+                    jlog.warn('could not get session_id from dkg_init}')
+                    await asyncio.sleep(5)
+                    continue
+
+            pub = await client.wait_on_dkg_output(session_id)
+            if not pub:
+                session_id = None
+                session = None
+                continue
+
+            if session.dkg_output:
+                md_type_idx = None
+                session_id = None
+                session = None
+                client.dkg_gen_list.pop(0)
+                continue
+
+    def dkg_init(self, mixdepth, address_type, index):
+        jlog.debug(f'Coordinator call dkg_init '
+                   f'({mixdepth}, {address_type}, {index})')
+        client = self.factory.client
+        hostpubkeyhash, session_id, sig = client.dkg_init(mixdepth,
+                                                          address_type, index)
+        coordinator = client.dkg_coordinators.get(session_id)
+        session = client.dkg_sessions.get(session_id)
+        if session_id and session and coordinator:
+            d = self.callRemote(commands.JMDKGInit,
+                                hostpubkeyhash=hostpubkeyhash,
+                                session_id=bintohex(session_id),
+                                sig=sig)
+            self.defaultCallbacks(d)
+            session.dkg_init_sec = time.time()
+            return session_id, coordinator, session
+        return None, None, None
+
+    @commands.JMDKGInitSeen.responder
+    def on_JM_DKG_INIT_SEEN(self, nick, hostpubkeyhash, session_id, sig):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        session_id = hextobin(session_id)
+        nick, hostpubkeyhash, session_id, sig, pmsg1 = client.on_dkg_init(
+            nick, hostpubkeyhash, session_id, sig)
+        if pmsg1:
+            d = self.callRemote(commands.JMDKGPMsg1,
+                                nick=nick, hostpubkeyhash=hostpubkeyhash,
+                                session_id=session_id, sig=sig,
+                                pmsg1=base64.b64encode(pmsg1).decode('ascii'))
+            self.defaultCallbacks(d)
+        return {'accepted': True}
+
+    @commands.JMDKGPMsg1Seen.responder
+    def on_JM_DKG_PMSG1_SEEN(self, nick, hostpubkeyhash,
+                             session_id, sig, pmsg1):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        pmsg1 = client.deserialize_pmsg1(base64.b64decode(pmsg1))
+        ready_nicks, cmsg1 = client.on_dkg_pmsg1(nick, hostpubkeyhash,
+                                                 bin_session_id, sig, pmsg1)
+        if ready_nicks and cmsg1:
+            for nick in ready_nicks:
+                self.dkg_cmsg1(nick, session_id, cmsg1)
+        return {'accepted': True}
+
+    def dkg_cmsg1(self, nick, session_id, cmsg1):
+        d = self.callRemote(commands.JMDKGCMsg1,
+                            nick=nick, session_id=session_id,
+                            cmsg1=base64.b64encode(cmsg1).decode('ascii'))
+        self.defaultCallbacks(d)
+
+    @commands.JMDKGPMsg2Seen.responder
+    def on_JM_DKG_PMSG2_SEEN(self, nick, session_id, pmsg2):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        pmsg2 = client.deserialize_pmsg2(base64.b64decode(pmsg2))
+        ready_nicks, cmsg2, ext_recovery = client.on_dkg_pmsg2(
+            nick, bin_session_id, pmsg2)
+        if ready_nicks and cmsg2 and ext_recovery:
+            for nick in ready_nicks:
+                self.dkg_cmsg2(nick, session_id, cmsg2, ext_recovery)
+        return {'accepted': True}
+
+    def dkg_cmsg2(self, nick, session_id, cmsg2, ext_recovery):
+        d = self.callRemote(commands.JMDKGCMsg2,
+                            nick=nick, session_id=session_id,
+                            cmsg2=base64.b64encode(cmsg2).decode('ascii'),
+                            ext_recovery=ext_recovery.decode('ascii'))
+        self.defaultCallbacks(d)
+
+    @commands.JMDKGFinalizedSeen.responder
+    def on_JM_DKG_FINALIZED_SEEN(self, nick, session_id):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        jlog.debug(f'Coordinator get dkgfinalized')
+        client.on_dkg_finalized(nick, bin_session_id)
+        return {'accepted': True}
+
+    @commands.JMDKGCMsg1Seen.responder
+    def on_JM_DKG_CMSG1_SEEN(self, nick, session_id, cmsg1):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        session = client.dkg_sessions.get(bin_session_id)
+        if not session:
+            jlog.error(f'on_JM_DKG_CMSG1_SEEN: session {session_id} not found')
+            return {'accepted': True}
+        if session and session.coord_nick == nick:
+            cmsg1 = client.deserialize_cmsg1(base64.b64decode(cmsg1))
+            pmsg2 = client.party_step2(bin_session_id, cmsg1)
+            if pmsg2:
+                pmsg2b64 = base64.b64encode(pmsg2).decode('ascii')
+                d = self.callRemote(commands.JMDKGPMsg2,
+                                    nick=nick, session_id=session_id,
+                                    pmsg2=pmsg2b64)
+                self.defaultCallbacks(d)
+        else:
+            jlog.error(f'on_JM_DKG_CMSG1_SEEN: not coordinator nick {nick}')
+        return {'accepted': True}
+
+    @commands.JMDKGCMsg2Seen.responder
+    def on_JM_DKG_CMSG2_SEEN(self, nick, session_id, cmsg2, ext_recovery):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        session = client.dkg_sessions.get(bin_session_id)
+        if not session:
+            jlog.error(f'on_JM_DKG_CMSG2_SEEN: session {session_id} not found')
+            return {'accepted': True}
+        if session and session.coord_nick == nick:
+            cmsg2 = client.deserialize_cmsg2(base64.b64decode(cmsg2))
+            finalized = client.finalize(bin_session_id, cmsg2,
+                                        ext_recovery.encode('ascii'))
+            if finalized:
+                d = self.callRemote(commands.JMDKGFinalized,
+                                    nick=nick, session_id=session_id)
+                self.defaultCallbacks(d)
+        else:
+            jlog.error(f'on_JM_DKG_CMSG2_SEEN: not coordinator nick {nick}')
+        return {'accepted': True}
+
+    """FROST specifics
+    """
+    def frost_init(self, dkg_session_id, msg_bytes):
+        jlog.debug(f'Coordinator call frost_init')
+        client = self.factory.client
+        hostpubkeyhash, session_id, sig = client.frost_init(
+            dkg_session_id, msg_bytes)
+        coordinator = client.frost_coordinators.get(session_id)
+        session = client.frost_sessions.get(session_id)
+        if session_id and session and coordinator:
+            d = self.callRemote(commands.JMFROSTInit,
+                                hostpubkeyhash=hostpubkeyhash,
+                                session_id=bintohex(session_id),
+                                sig=sig)
+            self.defaultCallbacks(d)
+            coordinator.frost_init_sec = time.time()
+            return session_id, coordinator, session
+        return None, None, None
+
+    @commands.JMFROSTInitSeen.responder
+    def on_JM_FROST_INIT_SEEN(self, nick, hostpubkeyhash, session_id, sig):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        session_id = hextobin(session_id)
+        nick, hostpubkeyhash, session_id, sig, pub_nonce = \
+            client.on_frost_init(nick, hostpubkeyhash, session_id, sig)
+        if pub_nonce:
+            pub_nonce_b64 = base64.b64encode(pub_nonce).decode('ascii')
+            d = self.callRemote(commands.JMFROSTRound1,
+                                nick=nick, hostpubkeyhash=hostpubkeyhash,
+                                session_id=session_id, sig=sig,
+                                pub_nonce=pub_nonce_b64)
+            self.defaultCallbacks(d)
+        return {'accepted': True}
+
+    @commands.JMFROSTRound1Seen.responder
+    def on_JM_FROST_ROUND1_SEEN(self, nick, hostpubkeyhash,
+                                session_id, sig, pub_nonce):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        pub_nonce = base64.b64decode(pub_nonce)
+        ready_nicks, nonce_agg, dkg_session_id, ids, msg = \
+            client.on_frost_round1(nick, hostpubkeyhash, bin_session_id,
+                                   sig, pub_nonce)
+        if ready_nicks and nonce_agg:
+            for nick in ready_nicks:
+                self.frost_agg1(nick, session_id, nonce_agg,
+                                dkg_session_id, ids, msg)
+        return {'accepted': True}
+
+    def frost_agg1(self, nick, session_id,
+                   nonce_agg, dkg_session_id, ids, msg):
+        nonce_agg = base64.b64encode(nonce_agg).decode('ascii')
+        dkg_session_id = base64.b64encode(dkg_session_id).decode('ascii')
+        ids = ','.join([str(i)for i in ids])
+        msg = base64.b64encode(msg).decode('ascii')
+        d = self.callRemote(commands.JMFROSTAgg1,
+                            nick=nick, session_id=session_id,
+                            nonce_agg=nonce_agg, dkg_session_id=dkg_session_id,
+                            ids=ids, msg=msg)
+        self.defaultCallbacks(d)
+
+    @commands.JMFROSTAgg1Seen.responder
+    def on_JM_FROST_AGG1_SEEN(self, nick, session_id,
+                              nonce_agg, dkg_session_id, ids, msg):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        session = client.frost_sessions.get(bin_session_id)
+        if not session:
+            jlog.error(f'on_JM_DKG_AGG1_SEEN: session {session_id} not found')
+            return {'accepted': True}
+        if session and session.coord_nick == nick:
+            nonce_agg = base64.b64decode(nonce_agg)
+            dkg_session_id = base64.b64decode(dkg_session_id)
+            ids = [int(i) for i in ids.split(',')]
+            msg = base64.b64decode(msg)
+
+            partial_sig = client.frost_round2(
+                bin_session_id, nonce_agg, dkg_session_id, ids, msg)
+            if partial_sig:
+                partial_sig = base64.b64encode(partial_sig).decode('ascii')
+                d = self.callRemote(commands.JMFROSTRound2,
+                                    nick=nick, session_id=session_id,
+                                    partial_sig=partial_sig)
+                self.defaultCallbacks(d)
+        else:
+            jlog.error(f'on_JM_DKG_AGG1_SEEN: not coordinator nick {nick}')
+        return {'accepted': True}
+
+    @commands.JMFROSTRound2Seen.responder
+    def on_JM_FROST_ROUND2_SEEN(self, nick, session_id, partial_sig):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        partial_sig = base64.b64decode(partial_sig)
+        sig = client.on_frost_round2(nick, bin_session_id, partial_sig)
+        if sig:
+            jlog.debug(f'Successfully get signature {sig.hex()[:8]}...')
+        return {'accepted': True}
+
+
 class JMMakerClientProtocol(JMClientProtocol):
     def __init__(self, factory, maker, nick_priv=None):
         self.factory = factory
@@ -395,11 +699,14 @@ class JMMakerClientProtocol(JMClientProtocol):
 
     @commands.JMUp.responder
     def on_JM_UP(self):
-        #wait until ready locally to submit offers (can be delayed
-        #if wallet sync is slow).
-        self.offers_ready_loop_counter = 0
-        self.offers_ready_loop = task.LoopingCall(self.submitOffers)
-        self.offers_ready_loop.start(2.0)
+        if isinstance(self.client, DKGClient):
+            self.client.on_jm_up()
+        if isinstance(self.client, Maker):
+            # wait until ready locally to submit offers (can be delayed
+            # if wallet sync is slow).
+            self.offers_ready_loop_counter = 0
+            self.offers_ready_loop = task.LoopingCall(self.submitOffers)
+            self.offers_ready_loop.start(2.0)
         return {'accepted': True}
 
     def submitOffers(self):
@@ -461,10 +768,10 @@ class JMMakerClientProtocol(JMClientProtocol):
         return {"accepted": True}
 
     @commands.JMAuthReceived.responder
-    def on_JM_AUTH_RECEIVED(self, nick, offer, commitment, revelation, amount,
+    async def on_JM_AUTH_RECEIVED(self, nick, offer, commitment, revelation, amount,
                             kphex):
-        retval = self.client.on_auth_received(nick, offer,
-                                              commitment, revelation, amount, kphex)
+        retval = await self.client.on_auth_received(
+                    nick, offer, commitment, revelation, amount, kphex)
         if not retval[0]:
             jlog.info("Maker refuses to continue on receiving auth.")
         else:
@@ -488,8 +795,8 @@ class JMMakerClientProtocol(JMClientProtocol):
         return {"accepted": True}
 
     @commands.JMTXReceived.responder
-    def on_JM_TX_RECEIVED(self, nick, tx, offer):
-        retval = self.client.on_tx_received(nick, tx, offer)
+    async def on_JM_TX_RECEIVED(self, nick, tx, offer):
+        retval = await self.client.on_tx_received(nick, tx, offer)
         if not retval[0]:
             jlog.info("Maker refuses to continue on receipt of tx")
         else:
@@ -621,7 +928,7 @@ class JMTakerClientProtocol(JMClientProtocol):
                             blacklist_location=jm_single().commitment_list_location)
         self.defaultCallbacks(d)
 
-    def stallMonitor(self, schedule_index):
+    async def stallMonitor(self, schedule_index):
         """Diagnoses whether long wait is due to any kind of failure;
         if so, calls the taker on_finished_callback with a failure
         flag so that the transaction can be re-tried or abandoned, as desired.
@@ -645,7 +952,10 @@ class JMTakerClientProtocol(JMClientProtocol):
         if not self.client.txid:
             #txid is set on pushing; if it's not there, we have failed.
             jlog.info("Stall detected. Retrying transaction if possible ...")
-            self.client.on_finished_callback(False, True, 0.0)
+            finished_cb_res = self.client.on_finished_callback(
+                False, True, 0.0)
+            if asyncio.iscoroutine(self.client.on_finished_callback):
+                await finished_cb_res
         else:
             #This shouldn't really happen; if the tx confirmed,
             #the finished callback should already be called.
@@ -670,7 +980,7 @@ class JMTakerClientProtocol(JMClientProtocol):
         return {'accepted': True}
 
     @commands.JMFillResponse.responder
-    def on_JM_FILL_RESPONSE(self, success, ioauth_data):
+    async def on_JM_FILL_RESPONSE(self, success, ioauth_data):
         """Receives the entire set of phase 1 data (principally utxos)
         from the counterparties and passes through to the Taker for
         tx construction. If there were sufficient makers, data is passed
@@ -689,14 +999,17 @@ class JMTakerClientProtocol(JMClientProtocol):
             return {'accepted': True}
         else:
             jlog.info("Makers responded with: " + str(ioauth_data))
-            retval = self.client.receive_utxos(ioauth_data)
+            retval = await self.client.receive_utxos(ioauth_data)
             if not retval[0]:
                 jlog.info("Taker is not continuing, phase 2 abandoned.")
                 jlog.info("Reason: " + str(retval[1]))
                 if len(self.client.schedule) == 1:
                     # see comment for the same invocation in on_JM_OFFERS;
                     # the logic here is the same.
-                    self.client.on_finished_callback(False, False, 0.0)
+                    finished_cb_res = self.client.on_finished_callback(
+                        False, False, 0.0)
+                    if asyncio.iscoroutine(self.client.on_finished_callback):
+                        await finished_cb_res
                 return {'accepted': False}
             else:
                 nick_list, tx = retval[1:]
@@ -704,12 +1017,13 @@ class JMTakerClientProtocol(JMClientProtocol):
                 return {'accepted': True}
 
     @commands.JMOffers.responder
-    def on_JM_OFFERS(self, orderbook, fidelitybonds):
+    async def on_JM_OFFERS(self, orderbook, fidelitybonds):
         self.orderbook = json.loads(orderbook)
         fidelity_bonds_list = json.loads(fidelitybonds)
         #Removed for now, as judged too large, even for DEBUG:
         #jlog.debug("Got the orderbook: " + str(self.orderbook))
-        retval = self.client.initialize(self.orderbook, fidelity_bonds_list)
+        retval = await self.client.initialize(
+            self.orderbook, fidelity_bonds_list)
         #format of retval is:
         #True, self.cjamount, commitment, revelation, self.filtered_orderbook)
         if not retval[0]:
@@ -718,12 +1032,18 @@ class JMTakerClientProtocol(JMClientProtocol):
                 #In single sendpayments, allow immediate quit.
                 #This could be an optional feature also for multi-entry schedules,
                 #but is not the functionality desired in general (tumbler).
-                self.client.on_finished_callback(False, False, 0.0)
+                finished_cb_res = self.client.on_finished_callback(
+                    False, False, 0.0)
+                if asyncio.iscoroutine(self.client.on_finished_callback):
+                    await finished_cb_res
             return {'accepted': True}
         elif retval[0] == "commitment-failure":
             #This case occurs if we cannot find any utxos for reasons
             #other than age, which is a permanent failure
-            self.client.on_finished_callback(False, False, 0.0)
+            finished_cb_res = self.client.on_finished_callback(
+                False, False, 0.0)
+            if asyncio.iscoroutine(self.client.on_finished_callback):
+                await finished_cb_res
             return {'accepted': True}
         amt, cmt, rev, foffers = retval[1:]
         d = self.callRemote(commands.JMFill,
@@ -735,8 +1055,8 @@ class JMTakerClientProtocol(JMClientProtocol):
         return {'accepted': True}
 
     @commands.JMSigReceived.responder
-    def on_JM_SIG_RECEIVED(self, nick, sig):
-        retval = self.client.on_sig(nick, sig)
+    async def on_JM_SIG_RECEIVED(self, nick, sig):
+        retval = await self.client.on_sig(nick, sig)
         if retval:
             nick_to_use, tx = retval
             self.push_tx(nick_to_use, tx)
@@ -857,7 +1177,7 @@ def start_reactor(host, port, factory=None, snickerfactory=None,
                     if p[0] >= (orgp + 100):
                         jlog.error("Tried 100 ports but cannot "
                                    "listen on any of them. Quitting.")
-                        sys.exit(EXIT_FAILURE)
+                        twisted_sys_exit(EXIT_FAILURE)
                     p[0] += 1
             return (p[0], serverconn)
 

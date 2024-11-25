@@ -9,7 +9,7 @@ from pprint import pformat
 from jmbase import jmprint
 from jmbitcoin import multiply, add_pubkeys, getG, podle_PublicKey,\
     podle_PrivateKey, N, podle_PublicKey_class
-from jmbase import (EXIT_FAILURE, utxostr_to_utxo,
+from jmbase import (EXIT_FAILURE, utxostr_to_utxo, twisted_sys_exit,
                     utxo_to_utxostr, hextobin, bintohex)
 
 PODLE_COMMIT_FILE = None
@@ -345,7 +345,7 @@ def read_from_podle_file():
                 #Exit conditions cannot be included in tests.
                 jmprint("the file: " + PODLE_COMMIT_FILE + " is not valid json.",
                         "error")
-                sys.exit(EXIT_FAILURE)
+                twisted_sys_exit(EXIT_FAILURE)
             if 'used' not in c.keys() or 'external' not in c.keys():
                 raise PoDLEError("Incorrectly formatted file: " + PODLE_COMMIT_FILE)
 

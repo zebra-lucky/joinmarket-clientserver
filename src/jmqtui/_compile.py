@@ -4,4 +4,4 @@ import os
 # `gui-dev` dependencies must be installed prior to execution.
 
 def compile_ui():
-    os.system('pyside2-uic jmqtui/open_wallet_dialog.ui -o jmqtui/open_wallet_dialog.py')
+    os.system('pyside6-uic jmqtui/open_wallet_dialog.ui -o jmqtui/open_wallet_dialog.py')

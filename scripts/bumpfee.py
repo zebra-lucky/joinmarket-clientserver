@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
+import asyncio
 from decimal import Decimal
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import get_log, hextobin, bintohex
 from jmbase.support import EXIT_SUCCESS, EXIT_FAILURE, EXIT_ARGERROR, jmprint, cli_prompt_user_yesno
 from jmclient import jm_single, load_program_config, open_test_wallet_maybe, get_wallet_path, WalletService
@@ -130,17 +135,18 @@ def prepare_transaction(new_tx, old_tx, wallet):
 
     return (input_scripts, spent_outs)
 
-def sign_transaction(new_tx, old_tx, wallet_service):
+async def sign_transaction(new_tx, old_tx, wallet_service):
     input_scripts, _ = prepare_transaction(new_tx, old_tx, wallet_service.wallet)
-    success, msg = wallet_service.sign_tx(new_tx, input_scripts)
+    success, msg = await wallet_service.sign_tx(new_tx, input_scripts)
     if not success:
         raise RuntimeError("Failed to sign transaction, quitting. Error msg: " + msg)
 
-def sign_psbt(new_tx, old_tx, wallet_service):
+async def sign_psbt(new_tx, old_tx, wallet_service):
     _, spent_outs = prepare_transaction(new_tx, old_tx, wallet_service.wallet)
-    unsigned_psbt = wallet_service.create_psbt_from_tx(
+    unsigned_psbt = await wallet_service.create_psbt_from_tx(
         new_tx, spent_outs=spent_outs)
-    signed_psbt, err = wallet_service.sign_psbt(unsigned_psbt.serialize())
+    signed_psbt, err = await wallet_service.sign_psbt(
+        unsigned_psbt.serialize())
 
     if err:
         raise RuntimeError("Failed to sign PSBT, quitting. Error message: " + err)
@@ -199,7 +205,7 @@ def create_bumped_tx(tx, fee_per_kb, wallet, output_index=-1):
         tx.vin, tx.vout, nLockTime=tx.nLockTime,
         nVersion=tx.nVersion)
 
-if __name__ == '__main__':
+async def main(self):
     (options, args) = parser.parse_args()
     load_program_config(config_path=options.datadir)
     if len(args) < 2:
@@ -221,7 +227,7 @@ if __name__ == '__main__':
 
     # open the wallet and synchronize it
     wallet_path = get_wallet_path(wallet_name, None)
-    wallet = open_test_wallet_maybe(
+    wallet = await open_test_wallet_maybe(
         wallet_path, wallet_name, options.amtmixdepths - 1,
         wallet_password_stdin=options.wallet_password_stdin,
         gap_limit=options.gaplimit)
@@ -250,7 +256,7 @@ if __name__ == '__main__':
     # sign the transaction
     if options.with_psbt:
         try:
-            psbt = sign_psbt(bumped_tx, orig_tx, wallet_service)
+            psbt = await sign_psbt(bumped_tx, orig_tx, wallet_service)
 
             print("Completed PSBT created: ")
             print(wallet_service.human_readable_psbt(psbt))
@@ -263,7 +269,7 @@ if __name__ == '__main__':
             sys.exit(EXIT_FAILURE)
     else:
         try:
-            sign_transaction(bumped_tx, orig_tx, wallet_service)
+            await sign_transaction(bumped_tx, orig_tx, wallet_service)
         except RuntimeError as e:
             jlog.error(str(e))
             sys.exit(EXIT_FAILURE)
@@ -284,3 +290,13 @@ if __name__ == '__main__':
             jlog.error("Transaction broadcast failed!")
             sys.exit(EXIT_FAILURE)
 
+
+async def _main():
+    await main()
+    reactor.stop()
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    asyncio_loop.create_task(_main())
+    reactor.run()

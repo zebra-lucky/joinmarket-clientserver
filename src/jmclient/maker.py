@@ -1,10 +1,15 @@
 import base64
+import hashlib
 import sys
 import abc
 import atexit
 
+from bitcointx.wallet import CCoinKey, XOnlyPubKey, tap_tweak_pubkey
+
 import jmbitcoin as btc
-from jmbase import bintohex, hexbin, get_log, EXIT_FAILURE
+from jmbase import (bintohex, hexbin, async_hexbin, get_log, EXIT_FAILURE,
+                    twisted_sys_exit)
+from jmclient.wallet import TaprootWallet, FrostWallet
 from jmclient.wallet_service import WalletService
 from jmclient.configure import jm_single
 from jmclient.support import calc_cj_fee
@@ -29,7 +34,7 @@ class Maker(object):
         self.sync_wait_loop.start(2.0, now=False)
         self.aborted = False
 
-    def try_to_create_my_orders(self):
+    async def try_to_create_my_orders(self):
         """Because wallet syncing is not synchronous(!),
         we cannot calculate our offers until we know the wallet
         contents, so poll until BlockchainInterface.wallet_synced
@@ -38,14 +43,14 @@ class Maker(object):
         """
         if not self.wallet_service.synced:
             return
-        self.freeze_timelocked_utxos()
+        await self.freeze_timelocked_utxos()
         try:
             self.offerlist = self.create_my_orders()
         except AssertionError:
             jlog.error("Failed to create offers.")
             self.aborted = True
             return
-        self.fidelity_bond = self.get_fidelity_bond_template()
+        self.fidelity_bond = await self.get_fidelity_bond_template()
         self.sync_wait_loop.stop()
         if not self.offerlist:
             jlog.error("Failed to create offers.")
@@ -53,8 +58,9 @@ class Maker(object):
             return
         jlog.info('offerlist={}'.format(self.offerlist))
 
-    @hexbin
-    def on_auth_received(self, nick, offer, commitment, cr, amount, kphex):
+    @async_hexbin
+    async def on_auth_received(self, nick, offer, commitment,
+                               cr, amount, kphex):
         """Receives data on proposed transaction offer from daemon, verifies
         commitment, returns necessary data to send ioauth message (utxos etc)
         """
@@ -106,7 +112,7 @@ class Maker(object):
 
         # authorisation of taker passed
         # Find utxos for the transaction now:
-        utxos, cj_addr, change_addr = self.oid_to_order(offer, amount)
+        utxos, cj_addr, change_addr = await self.oid_to_order(offer, amount)
         if not utxos:
             #could not find funds
             return (False,)
@@ -116,15 +122,38 @@ class Maker(object):
         # Need to choose an input utxo pubkey to sign with
         # Just choose the first utxo in utxos and retrieve key from wallet.
         auth_address = next(iter(utxos.values()))['address']
-        auth_key = self.wallet_service.get_key_from_addr(auth_address)
-        auth_pub = btc.privkey_to_pubkey(auth_key)
-        # kphex was auto-converted by @hexbin but we actually need to sign the
-        # hex version to comply with pre-existing JM protocol:
-        btc_sig = btc.ecdsa_sign(bintohex(kphex), auth_key)
-        return (True, utxos, auth_pub, cj_addr, change_addr, btc_sig)
+        wallet = self.wallet_service.wallet
+        if isinstance(wallet, FrostWallet):
+            path = wallet.addr_to_path(auth_address)
+            md, address_type, index = wallet.get_details(path)
+            kphex_hash = hashlib.sha256(bintohex(kphex).encode()).digest()
+            sig, _, tweaked_pubkey = await wallet.ipc_client.frost_sign(
+                md, address_type, index, kphex_hash)
+            sig = base64.b64encode(sig).decode('ascii')
+            if not sig:
+                return reject(str(tweaked_pubkey))
+            return (True, utxos, tweaked_pubkey[1:], cj_addr, change_addr, sig)
+        elif isinstance(wallet, TaprootWallet):
+            auth_key = self.wallet_service.get_key_from_addr(auth_address)
+            auth_pub = btc.privkey_to_pubkey(auth_key)
+            coin_key = CCoinKey.from_secret_bytes(auth_key[:32])
+            kphex_hash = hashlib.sha256(bintohex(kphex).encode()).digest()
+            sig = coin_key.sign_schnorr_tweaked(kphex_hash)
+            sig = base64.b64encode(sig).decode('ascii')
+            auth_pub_tweaked = tap_tweak_pubkey(XOnlyPubKey(auth_pub))
+            if auth_pub_tweaked is not None:
+                auth_pub_tweaked = bytes(auth_pub_tweaked[0])
+            return (True, utxos, auth_pub_tweaked, cj_addr, change_addr, sig)
+        else:
+            auth_key = self.wallet_service.get_key_from_addr(auth_address)
+            auth_pub = btc.privkey_to_pubkey(auth_key)
+            # kphex was auto-converted by @hexbin but we actually need to sign the
+            # hex version to comply with pre-existing JM protocol:
+            btc_sig = btc.ecdsa_sign(bintohex(kphex), auth_key)
+            return (True, utxos, auth_pub, cj_addr, change_addr, btc_sig)
 
-    @hexbin
-    def on_tx_received(self, nick, tx, offerinfo):
+    @async_hexbin
+    async def on_tx_received(self, nick, tx, offerinfo):
         """Called when the counterparty has sent an unsigned
         transaction. Sigs are created and returned if and only
         if the transaction passes verification checks (see
@@ -158,7 +187,7 @@ class Maker(object):
             amount = utxos[utxo]['value']
             our_inputs[index] = (script, amount)
 
-        success, msg = self.wallet_service.sign_tx(tx, our_inputs)
+        success, msg = await self.wallet_service.sign_tx(tx, our_inputs)
         assert success, msg
         for index in our_inputs:
             # The second case here is kept for backwards compatibility.
@@ -176,7 +205,7 @@ class Maker(object):
                 sigmsg = btc.CScript(sig)
             else:
                 jlog.error("Taker has unknown wallet type")
-                sys.exit(EXIT_FAILURE)
+                twisted_sys_exit(EXIT_FAILURE)
             sigs.append(base64.b64encode(sigmsg).decode('ascii'))
         return (True, sigs)
 
@@ -267,7 +296,7 @@ class Maker(object):
                     self.offerlist.remove(oldorder_s[0])
             self.offerlist += to_announce
 
-    def freeze_timelocked_utxos(self):
+    async def freeze_timelocked_utxos(self):
         """
         Freeze all wallet's timelocked UTXOs. These cannot be spent in a
         coinjoin because of protocol limitations.
@@ -276,7 +305,7 @@ class Maker(object):
             return
 
         frozen_utxos = []
-        md_utxos = self.wallet_service.get_utxos_by_mixdepth()
+        md_utxos = await self.wallet_service.get_utxos_by_mixdepth()
         for tx, details \
                 in md_utxos[self.wallet_service.FIDELITY_BOND_MIXDEPTH].items():
             if self.wallet_service.is_timelocked_path(details['path']):
@@ -301,7 +330,7 @@ class Maker(object):
         """
 
     @abc.abstractmethod
-    def oid_to_order(self, cjorder, amount):
+    async def oid_to_order(self, cjorder, amount):
         """Must convert an order with an offer/order id
         into a set of utxos to fill the order.
         Also provides the output addresses for the Taker.
@@ -319,7 +348,7 @@ class Maker(object):
         a transaction into a block (e.g. announce orders)
         """
 
-    def get_fidelity_bond_template(self):
+    async def get_fidelity_bond_template(self):
         """
         Generates information about a fidelity bond which will be announced
         By default returns no fidelity bond

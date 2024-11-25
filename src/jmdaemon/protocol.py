@@ -37,11 +37,21 @@ NICK_MAX_ENCODED = 14  #comes from base58 expansion; recalculate if above change
 #commitments; note multiple options may be used in future
 COMMITMENT_PREFIXES = ["P"]
 #Lists of valid commands
+dkg_public_list = ['dkginit']
+dkg_private_list = ['dkgpmsg1', 'dkgpmsg2', 'dkgcmsg1', 'dkgcmsg2',
+                    'dkgfinalized']
+frost_public_list = ['frostinit']
+frost_private_list = ['frostround1', 'frostround2', 'frostagg1']
 encrypted_commands = ["auth", "ioauth", "tx", "sig"]
 plaintext_commands = ["fill", "error", "pubkey", "orderbook", "push"]
 commitment_broadcast_list = ["hp2"]
 plaintext_commands += offername_list
 plaintext_commands += commitment_broadcast_list
-public_commands = commitment_broadcast_list + ["orderbook", "cancel"
-                                              ] + offername_list
+plaintext_commands += dkg_public_list
+plaintext_commands += dkg_private_list
+plaintext_commands += frost_public_list
+plaintext_commands += frost_private_list
+public_commands = commitment_broadcast_list + [
+    "orderbook", "cancel" ] + offername_list + [
+    dkg_public_list + frost_public_list]
 private_commands = encrypted_commands + plaintext_commands

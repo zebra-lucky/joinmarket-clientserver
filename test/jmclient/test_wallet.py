@@ -14,7 +14,7 @@ from jmclient import load_test_config, jm_single, BaseWallet, \
     SegwitWallet, WalletService, SegwitWalletFidelityBonds,\
     create_wallet, open_test_wallet_maybe, open_wallet, \
     FidelityBondMixin, FidelityBondWatchonlyWallet,\
-    wallet_gettimelockaddress, UnknownAddressForLabel
+    wallet_gettimelockaddress, UnknownAddressForLabel, TaprootWallet
 from test_blockchaininterface import sync_test_wallet
 from freezegun import freeze_time
 
@@ -413,6 +413,26 @@ def test_signing_simple(setup_wallet, wallet_cls, type_check):
     type_check(tx)
     txout = jm_single().bc_interface.pushtx(tx.serialize())
     assert txout
+
+
+def test_signing_simple_p2tr(setup_wallet):
+    jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
+    storage = VolatileStorage()
+    TaprootWallet.initialize(storage, get_network(), entropy=b"\xaa"*16)
+    wallet = TaprootWallet(storage)
+    utxo = fund_wallet_addr(wallet, wallet.get_internal_addr(0))
+    # The dummy output is constructed as an unspendable p2sh:
+    tx = btc.mktx([utxo],
+            [{"address": str(btc.CCoinAddress.from_scriptPubKey(
+                btc.CScript(b"\x00").to_p2sh_scriptPubKey())),
+              "value": 10**8 - 9000}])
+    script = wallet.get_script(0, BaseWallet.ADDRESS_TYPE_INTERNAL, 0)
+    success, msg = wallet.sign_tx(tx, {0: (script, 10**8)})
+    assert success, msg
+    assert_segwit(tx)
+    txout = jm_single().bc_interface.pushtx(tx.serialize())
+    assert txout
+
 
 # note that address validation is tested separately;
 # this test functions only to make sure that given a valid

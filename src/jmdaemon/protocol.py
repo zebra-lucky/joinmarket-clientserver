@@ -16,6 +16,10 @@ offertypes = {"reloffer": [(int, "oid"), (int, "minsize"), (int, "maxsize"),
               "sw0reloffer": [(int, "oid"), (int, "minsize"), (int, "maxsize"),
                            (int, "txfee"), (float, "cjfee")],
               "sw0absoffer": [(int, "oid"), (int, "minsize"), (int, "maxsize"),
+                           (int, "txfee"), (int, "cjfee")],
+              "trreloffer": [(int, "oid"), (int, "minsize"), (int, "maxsize"),
+                           (int, "txfee"), (float, "cjfee")],
+              "trabsoffer": [(int, "oid"), (int, "minsize"), (int, "maxsize"),
                            (int, "txfee"), (int, "cjfee")]}
 
 offername_list = list(offertypes.keys())

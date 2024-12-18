@@ -99,13 +99,15 @@ class YieldGeneratorBasic(YieldGenerator):
 
         max_mix = max(mix_balance, key=mix_balance.get)
         f = '0'
-        if self.ordertype in ('reloffer', 'swreloffer', 'sw0reloffer'):
+        if self.ordertype in ('reloffer', 'swreloffer',
+                              'sw0reloffer', 'trreloffer'):
             f = self.cjfee_r
             #minimum size bumped if necessary such that you always profit
             #least 50% of the miner fee
             self.minsize = max(int(1.5 * self.txfee_contribution /
                 float(self.cjfee_r)), self.minsize)
-        elif self.ordertype in ('absoffer', 'swabsoffer', 'sw0absoffer'):
+        elif self.ordertype in ('absoffer', 'swabsoffer',
+                                'sw0absoffer', 'trreloffer'):
             f = str(self.txfee_contribution + self.cjfee_a)
         order = {'oid': 0,
                  'ordertype': self.ordertype,
@@ -455,7 +457,9 @@ def ygmain(ygclass, nickserv_password='', gaplimit=6):
     wallet_service.startService()
 
     txtype = wallet_service.get_txtype()
-    if txtype == "p2wpkh":
+    if txtype == "p2tr":
+        prefix = "tr"
+    elif txtype == "p2wpkh":
         prefix = "sw0"
     elif txtype == "p2sh-p2wpkh":
         prefix = "sw"

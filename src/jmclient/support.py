@@ -167,9 +167,9 @@ def select_one_utxo(unspent, value):
 
 
 def calc_cj_fee(ordertype, cjfee, cj_amount):
-    if ordertype in ['sw0absoffer', 'swabsoffer', 'absoffer']:
+    if ordertype in ['trabsoffer', 'sw0absoffer', 'swabsoffer', 'absoffer']:
         real_cjfee = int(cjfee)
-    elif ordertype in ['sw0reloffer', 'swreloffer', 'reloffer']:
+    elif ordertype in ['trreloffer', 'sw0reloffer', 'swreloffer', 'reloffer']:
         real_cjfee = int((Decimal(cjfee) * Decimal(cj_amount)).quantize(Decimal(
             1)))
     else:
@@ -338,9 +338,11 @@ def choose_sweep_orders(offers,
         sumtxfee_contribution = 0
         for order in ordercombo:
             sumtxfee_contribution += order['txfee']
-            if order['ordertype'] in ['sw0absoffer', 'swabsoffer', 'absoffer']:
+            if order['ordertype'] in ['trabsoffer', 'sw0absoffer',
+                                      'swabsoffer', 'absoffer']:
                 sumabsfee += int(order['cjfee'])
-            elif order['ordertype'] in ['sw0reloffer', 'swreloffer', 'reloffer']:
+            elif order['ordertype'] in ['trreloffer', 'sw0reloffer',
+                                        'swreloffer', 'reloffer']:
                 sumrelfee += Decimal(order['cjfee'])
             #this is unreachable since calc_cj_fee must already have been called
             else: #pragma: no cover

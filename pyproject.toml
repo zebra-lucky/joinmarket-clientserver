@@ -34,6 +34,8 @@ jmdaemon = [
     "libnacl==1.8.0",
     "pyopenssl==24.0.0",
 ]
+jmfrost = [
+]
 jmqtui = [
     "PyQt5!=5.15.0,!=5.15.1,!=5.15.2,!=6.0",
     "PySide2!=5.15.0,!=5.15.1,!=5.15.2,!=6.0", # https://bugreports.qt.io/browse/QTBUG-88688
@@ -44,6 +46,7 @@ jmqtui = [
 client = [
     "joinmarket[jmclient]",
     "joinmarket[jmbitcoin]",
+    "joinmarket[jmfrost]",
 ]
 daemon = [
     "joinmarket[jmdaemon]",

@@ -17,7 +17,7 @@ from .wallet import (Mnemonic, estimate_tx_fee, WalletError, BaseWallet, ImportW
                      SegwitWallet, SegwitLegacyWallet, FidelityBondMixin,
                      FidelityBondWatchonlyWallet, SegwitWalletFidelityBonds,
                      UTXOManager, WALLET_IMPLEMENTATIONS, compute_tx_locktime,
-                     UnknownAddressForLabel)
+                     UnknownAddressForLabel, TaprootWallet)
 from .storage import (Argon2Hash, Storage, StorageError, RetryableStorageError,
                       StoragePasswordError, VolatileStorage)
 from .cryptoengine import (BTCEngine, BTC_P2PKH, BTC_P2SH_P2WPKH, BTC_P2WPKH, EngineError,
@@ -27,7 +27,7 @@ from .configure import (load_test_config, process_shutdown,
     load_program_config, jm_single, get_network, update_persist_config,
     validate_address, is_burn_destination, get_mchannels,
     get_blockchain_interface_instance, set_config, is_segwit_mode,
-    is_native_segwit_mode, JMPluginService, get_interest_rate,
+    is_taproot_mode, is_native_segwit_mode, JMPluginService, get_interest_rate,
     get_bondless_makers_allowance, check_and_start_tor)
 from .blockchaininterface import (BlockchainInterface,
                                   RegtestBitcoinCoreInterface, BitcoinCoreInterface)

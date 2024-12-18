@@ -75,7 +75,7 @@ def pytest_addoption(parser: Any) -> None:
                      default='bitcoinrpc',
                      help="the RPC username for your test bitcoin instance (default=bitcoinrpc)")
     parser.addoption("--nirc",
-                     type="int",
+                     type=int,
                      action="store",
                      default=1,
                      help="the number of local miniircd instances")
@@ -136,7 +136,7 @@ def setup_regtest_bitcoind(pytestconfig):
     bitcoin_path = pytestconfig.getoption("--btcroot")
     bitcoind_path = os.path.join(bitcoin_path, "bitcoind")
     bitcoincli_path = os.path.join(bitcoin_path, "bitcoin-cli")
-    start_cmd = f'{bitcoind_path} -regtest -daemon -conf={conf}'
+    start_cmd = f'{bitcoind_path} -regtest -daemon -txindex -conf={conf}'
     stop_cmd = f'{bitcoincli_path} -regtest -rpcuser={rpcuser} -rpcpassword={rpcpassword} stop'
 
     # determine bitcoind version

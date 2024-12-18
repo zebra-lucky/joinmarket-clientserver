@@ -16,7 +16,8 @@ from .configure import get_network, jm_single
 # make existing wallets unsable.
 TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WPKH, TYPE_P2SH_M_N, TYPE_TIMELOCK_P2WSH, \
     TYPE_SEGWIT_WALLET_FIDELITY_BONDS, TYPE_WATCHONLY_FIDELITY_BONDS, \
-    TYPE_WATCHONLY_TIMELOCK_P2WSH, TYPE_WATCHONLY_P2WPKH, TYPE_P2WSH, TYPE_P2TR = range(11)
+    TYPE_WATCHONLY_TIMELOCK_P2WSH, TYPE_WATCHONLY_P2WPKH, TYPE_P2WSH, \
+    TYPE_P2TR, TYPE_P2TR_FROST = range(12)
 NET_MAINNET, NET_TESTNET, NET_SIGNET = range(3)
 NET_MAP = {'mainnet': NET_MAINNET, 'testnet': NET_TESTNET,
     'signet': NET_SIGNET}
@@ -458,6 +459,32 @@ class BTC_Watchonly_P2WPKH(BTC_P2WPKH):
                          hashcode=btc.SIGHASH_ALL, **kwargs):
         raise RuntimeError("Cannot spend from watch-only wallets")
 
+
+class BTC_P2TR(BTCEngine):
+
+    @classproperty
+    def VBYTE(cls):
+        return btc.BTC_P2TR_VBYTE[get_network()]
+
+    @classmethod
+    def pubkey_to_script(cls, pubkey):
+        return btc.pubkey_to_p2tr_script(pubkey)
+
+    @classmethod
+    def pubkey_to_script_code(cls, pubkey):
+        raise NotImplementedError()
+
+    @classmethod
+    def sign_transaction(cls, tx, index, privkey, amount,
+                         hashcode=btc.SIGHASH_ALL, **kwargs):
+        assert amount is not None
+        assert 'spent_outputs' in kwargs
+        spent_outputs = kwargs['spent_outputs']
+        return btc.sign(tx, index, privkey,
+                        hashcode=hashcode, amount=amount, native="p2tr",
+                        spent_outputs=spent_outputs)
+
+
 ENGINES = {
     TYPE_P2PKH: BTC_P2PKH,
     TYPE_P2SH_P2WPKH: BTC_P2SH_P2WPKH,
@@ -466,5 +493,5 @@ ENGINES = {
     TYPE_WATCHONLY_TIMELOCK_P2WSH: BTC_Watchonly_Timelocked_P2WSH,
     TYPE_WATCHONLY_P2WPKH: BTC_Watchonly_P2WPKH,
     TYPE_SEGWIT_WALLET_FIDELITY_BONDS: BTC_P2WPKH,
-    TYPE_P2TR: None # TODO
+    TYPE_P2TR: BTC_P2TR,
 }

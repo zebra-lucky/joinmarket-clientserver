@@ -29,11 +29,12 @@ from .support import select_gradual, select_greedy, select_greediest, \
 from .cryptoengine import TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WSH,\
     TYPE_P2WPKH, TYPE_TIMELOCK_P2WSH, TYPE_SEGWIT_WALLET_FIDELITY_BONDS,\
     TYPE_WATCHONLY_FIDELITY_BONDS, TYPE_WATCHONLY_TIMELOCK_P2WSH, \
-    TYPE_WATCHONLY_P2WPKH, TYPE_P2TR, ENGINES, detect_script_type, EngineError
+    TYPE_WATCHONLY_P2WPKH, TYPE_P2TR, TYPE_P2TR_FROST, ENGINES, \
+    detect_script_type, EngineError
 from .support import get_random_bytes
 from . import mn_encode, mn_decode
 import jmbitcoin as btc
-from jmbase import JM_WALLET_NAME_PREFIX, bintohex
+from jmbase import JM_WALLET_NAME_PREFIX, bintohex, hextobin
 
 
 def _int_to_bytestr(i):
@@ -513,6 +514,8 @@ class BaseWallet(object):
             return 'p2pkh'
         elif self.TYPE == TYPE_P2SH_P2WPKH:
             return 'p2sh-p2wpkh'
+        elif self.TYPE == TYPE_P2TR:
+            return 'p2tr'
         elif self.TYPE in (TYPE_P2WPKH,
                 TYPE_SEGWIT_WALLET_FIDELITY_BONDS):
             return 'p2wpkh'
@@ -540,6 +543,29 @@ class BaseWallet(object):
         # from detect_script_type are covered.
         assert False
 
+    def getrawtransaction(self, txid):
+        """ If the transaction for txid is an in-wallet
+        transaction, will return a CTransaction object for it;
+        if not, will return None.
+        """
+        bci = jm_single().bc_interface
+        rawtx = bci.getrawtransaction(txid)
+        if not rawtx:
+            return None
+        return rawtx
+
+    def get_spent_outputs(self, tx):
+        spent_outputs = []
+        for txIn in tx.vin:
+            txid = txIn.prevout.hash[::-1]
+            n = txIn.prevout.n
+            rawtx = self.getrawtransaction(txid)
+            if rawtx:
+                prevtx = btc.CMutableTransaction.deserialize(
+                    hextobin(rawtx))
+                spent_outputs.append(prevtx.vout[n])
+        return spent_outputs
+
     def sign_tx(self, tx, scripts, **kwargs):
         """
         Add signatures to transaction for inputs referenced by scripts.
@@ -556,6 +582,11 @@ class BaseWallet(object):
             assert amount > 0
             path = self.script_to_path(script)
             privkey, engine = self._get_key_from_path(path)
+            spent_outputs = None  # need for SignatureHashSchnorr
+            if isinstance(self, TaprootWallet):
+                spent_outputs = self.get_spent_outputs(tx)
+            if spent_outputs:
+                kwargs['spent_outputs'] = spent_outputs
             sig, msg = engine.sign_transaction(tx, index, privkey,
                                                          amount, **kwargs)
             if not sig:
@@ -577,14 +608,37 @@ class BaseWallet(object):
         the wallet from other sources, or receiving payments or donations.
         JoinMarket will never generate these addresses for internal use.
         """
-        return self.get_new_addr(mixdepth, self.ADDRESS_TYPE_EXTERNAL)
+        if isinstance(self, TaprootWallet):
+            pubkey = self.get_new_pubkey(mixdepth, self.ADDRESS_TYPE_EXTERNAL)
+            return self.pubkey_to_addr(pubkey)
+        else:
+            return self.get_new_addr(mixdepth, self.ADDRESS_TYPE_EXTERNAL)
 
     def get_internal_addr(self, mixdepth):
         """
         Return an address for internal usage, as change addresses and when
         participating in transactions initiated by other parties.
         """
-        return self.get_new_addr(mixdepth, self.ADDRESS_TYPE_INTERNAL)
+        if isinstance(self, TaprootWallet):
+            pubkey = self.get_new_pubkey(mixdepth, self.ADDRESS_TYPE_INTERNAL)
+            return self.pubkey_to_addr(pubkey)
+        else:
+            return self.get_new_addr(mixdepth, self.ADDRESS_TYPE_INTERNAL)
+
+    def get_external_pubkey(self, mixdepth):
+        """
+        Return an pubkey suitable for external distribution, including funding
+        the wallet from other sources, or receiving payments or donations.
+        JoinMarket will never generate these addresses for internal use.
+        """
+        return self.get_new_pubkey(mixdepth, self.ADDRESS_TYPE_EXTERNAL)
+
+    def get_internal_pubkey(self, mixdepth):
+        """
+        Return an pubkey for internal usage, as change addresses and when
+        participating in transactions initiated by other parties.
+        """
+        return self.get_new_pubkey(mixdepth, self.ADDRESS_TYPE_INTERNAL)
 
     def get_external_script(self, mixdepth):
         return self.get_new_script(mixdepth, self.ADDRESS_TYPE_EXTERNAL)
@@ -652,6 +706,12 @@ class BaseWallet(object):
         return self.get_address_from_path(path,
             validate_cache=validate_cache)
 
+    def get_pubkey(self, mixdepth, address_type, index,
+                   validate_cache: bool = False):
+        path = self.get_path(mixdepth, address_type, index)
+        return self._get_pubkey_from_path(
+            path, validate_cache=validate_cache)[0]
+
     def get_address_from_path(self, path,
             validate_cache: bool = False):
         cache = self._get_cache_for_path(path)
@@ -679,6 +739,14 @@ class BaseWallet(object):
             validate_cache=validate_cache)
         return self.script_to_addr(script,
             validate_cache=validate_cache)
+
+    def get_new_pubkey(self, mixdepth, address_type,
+                       validate_cache: bool = True):
+        script = self.get_new_script(
+            mixdepth, address_type, validate_cache=validate_cache)
+        path = self.script_to_path(script)
+        return self._get_pubkey_from_path(
+            path, validate_cache=validate_cache)[0]
 
     def get_new_script(self, mixdepth, address_type,
             validate_cache: bool = True):
@@ -2811,6 +2879,10 @@ class BIP84Wallet(BIP32PurposedWallet):
     _PURPOSE = 2**31 + 84
     _ENGINE = ENGINES[TYPE_P2WPKH]
 
+class BIP86Wallet(BIP32PurposedWallet):
+    _PURPOSE = 2**31 + 86
+    _ENGINE = ENGINES[TYPE_P2TR]
+
 class SegwitLegacyWallet(ImportWalletMixin, BIP39WalletMixin, PSBTWalletMixin, SNICKERWalletMixin, BIP49Wallet):
     TYPE = TYPE_P2SH_P2WPKH
 
@@ -2819,6 +2891,10 @@ class SegwitWallet(ImportWalletMixin, BIP39WalletMixin, PSBTWalletMixin, SNICKER
 
 class SegwitWalletFidelityBonds(FidelityBondMixin, SegwitWallet):
     TYPE = TYPE_SEGWIT_WALLET_FIDELITY_BONDS
+
+class TaprootWallet(BIP39WalletMixin, BIP86Wallet):
+    # FIXME add other mixins if adapted
+    TYPE = TYPE_P2TR
 
 
 class FidelityBondWatchonlyWallet(FidelityBondMixin, BIP84Wallet):
@@ -2876,10 +2952,19 @@ class FidelityBondWatchonlyWallet(FidelityBondMixin, BIP84Wallet):
         return pubkey, self._ENGINE
 
 
+class FrostWallet(object):
+
+    _PURPOSE = 2**31 + 86
+    _ENGINE = ENGINES[TYPE_P2TR]
+    TYPE = TYPE_P2TR_FROST
+
+
 WALLET_IMPLEMENTATIONS = {
     LegacyWallet.TYPE: LegacyWallet,
     SegwitLegacyWallet.TYPE: SegwitLegacyWallet,
     SegwitWallet.TYPE: SegwitWallet,
     SegwitWalletFidelityBonds.TYPE: SegwitWalletFidelityBonds,
-    FidelityBondWatchonlyWallet.TYPE: FidelityBondWatchonlyWallet
+    FidelityBondWatchonlyWallet.TYPE: FidelityBondWatchonlyWallet,
+    TaprootWallet.TYPE: TaprootWallet,
+    FrostWallet.TYPE: FrostWallet,
 }

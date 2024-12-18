@@ -12,15 +12,17 @@ from bitcointx.core import (CMutableTransaction, CTxInWitness,
                             CMutableTxOut, CTxIn, CTxOut, ValidationError,
                             CBitcoinTransaction)
 from bitcointx.core.script import *
-from bitcointx.wallet import (P2WPKHCoinAddress, CCoinAddress, P2PKHCoinAddress,
-                              CCoinAddressError)
-from bitcointx.core.scripteval import (VerifyScript, SCRIPT_VERIFY_WITNESS,
+from bitcointx.core.script import SignatureHashSchnorr
+from bitcointx.wallet import (P2WPKHCoinAddress, P2TRCoinAddress, CCoinAddress,
+                              P2PKHCoinAddress, CCoinAddressError, CCoinKey)
+from bitcointx.core.scripteval import (SCRIPT_VERIFY_WITNESS,
                                        SCRIPT_VERIFY_P2SH,
                                        SCRIPT_VERIFY_STRICTENC,
                                        SIGVERSION_WITNESS_V0)
 
 from jmbase import bintohex, utxo_to_utxostr
 from jmbitcoin.secp256k1_main import *
+from .scripteval import VerifyScriptWithTaproot as VerifyScript
 
 
 def human_readable_transaction(tx: CTransaction, jsonified: bool = True) -> str:
@@ -137,7 +139,8 @@ def estimate_tx_size(ins: List[str], outs: List[str]) -> Union[int, Tuple[int]]:
     inmults = {"p2wsh": {"w": 1 + 72 + 43, "nw": 41},
                "p2wpkh": {"w": 108, "nw": 41},
                "p2sh-p2wpkh": {"w": 108, "nw": 64},
-               "p2pkh": {"w": 0, "nw": 148}}
+               "p2pkh": {"w": 0, "nw": 148},
+               "p2tr": {"w": 67, "nw": 41}}
 
     # Notes: in outputs, there is only 1 'scripthash'
     # type for either segwit/nonsegwit (hence "p2sh-p2wpkh"
@@ -215,6 +218,13 @@ def pubkey_to_p2sh_p2wpkh_script(pub: bytes) -> CScript:
         raise Exception("Invalid pubkey")
     return pubkey_to_p2wpkh_script(pub).to_p2sh_scriptPubKey()
 
+def pubkey_to_p2tr_script(pub: bytes) -> CScript:
+    """
+    Given a pubkey in bytes (compressed), return a CScript
+    representing the corresponding pay-to-taproot scriptPubKey.
+    """
+    return P2TRCoinAddress.from_pubkey(pub).to_scriptPubKey()
+
 def redeem_script_to_p2wsh_script(redeem_script: Union[bytes, CScript]) -> CScript:
     """ Given redeem script of type CScript (or bytes)
     returns the corresponding segwit v0 scriptPubKey as
@@ -246,12 +256,16 @@ def mk_burn_script(data: bytes) -> CScript:
         raise TypeError("data must be in bytes")
     return CScript([OP_RETURN, data])
 
-def sign(tx: CMutableTransaction,
-         i: int,
-         priv: bytes,
-         hashcode: SIGHASH_Type = SIGHASH_ALL,
-         amount: Optional[int] = None,
-         native: bool = False) -> Tuple[Optional[bytes], str]:
+def sign(
+    tx: CMutableTransaction,
+    i: int,
+    priv: bytes,
+    hashcode: SIGHASH_Type = SIGHASH_ALL,
+    amount: Optional[int] = None,
+    native: bool = False,
+    *,
+    spent_outputs: Optional[List[CTxOut]] = None
+) -> Tuple[Optional[bytes], str]:
     """
     Given a transaction tx of type CMutableTransaction, an input index i,
     and a raw privkey in bytes, updates the CMutableTransaction to contain
@@ -285,20 +299,44 @@ def sign(tx: CMutableTransaction,
         tx.vin[i].scriptSig = CScript([sig, pub])
         # Verify the signature worked.
         try:
-            VerifyScript(tx.vin[i].scriptSig,
-                        input_scriptPubKey, tx, i, flags=flags)
+            VerifyScript(
+                tx.vin[i].scriptSig, input_scriptPubKey, tx, i, flags=flags,
+                spent_outputs=spent_outputs)
         except Exception as e:
             return return_err(e)
         return sig, "signing succeeded"
 
     else:
-        # segwit case; we currently support p2wpkh native or under p2sh.
+        # segwit case; we currently support p2tr, p2wpkh native or under p2sh.
 
         # https://github.com/Simplexum/python-bitcointx/blob/648ad8f45ff853bf9923c6498bfa0648b3d7bcbd/bitcointx/core/scripteval.py#L1250-L1252
         flags.add(SCRIPT_VERIFY_P2SH)
         flags.add(SCRIPT_VERIFY_WITNESS)
 
-        if native and native != "p2wpkh":
+        if native and native == "p2tr":
+            assert spent_outputs
+            sighash = SignatureHashSchnorr(tx, i, spent_outputs)
+
+            try:
+                coin_key = CCoinKey.from_secret_bytes(priv[:32])
+                sig = coin_key.sign_schnorr_tweaked(sighash)
+            except Exception as e:
+                return return_err(e)
+            witness = [sig]
+            ctxwitness = CTxInWitness(CScriptWitness(witness))
+            tx.wit.vtxinwit[i] = ctxwitness
+            try:
+                input_scriptPubKey = pubkey_to_p2tr_script(pub)
+                VerifyScript(
+                    tx.vin[i].scriptSig, input_scriptPubKey, tx, i,
+                    flags=flags, amount=amount,
+                    witness=tx.wit.vtxinwit[i].scriptWitness,
+                    spent_outputs=spent_outputs)
+            except ValidationError as e:
+                return return_err(e)
+
+            return sig, "signing succeeded"
+        elif native and native != "p2wpkh":
             scriptCode = native
             input_scriptPubKey = redeem_script_to_p2wsh_script(native)
         else:
@@ -328,8 +366,10 @@ def sign(tx: CMutableTransaction,
         tx.wit.vtxinwit[i] = ctxwitness
         # Verify the signature worked.
         try:
-            VerifyScript(tx.vin[i].scriptSig, input_scriptPubKey, tx, i,
-                     flags=flags, amount=amount, witness=tx.wit.vtxinwit[i].scriptWitness)
+            VerifyScript(
+                tx.vin[i].scriptSig, input_scriptPubKey, tx, i, flags=flags,
+                amount=amount, witness=tx.wit.vtxinwit[i].scriptWitness,
+                spent_outputs=spent_outputs)
         except ValidationError as e:
             return return_err(e)
 
@@ -387,19 +427,23 @@ def make_shuffled_tx(ins: List[Tuple[bytes, int]],
     return mktx(ins, outs, version=version, locktime=locktime)
 
 def verify_tx_input(tx: CTransaction,
-                    i: int,
-                    scriptSig: CScript,
-                    scriptPubKey: CScript,
-                    amount: Optional[int] = None,
-                    witness: Optional[CScriptWitness] = None) -> bool:
+    i: int,
+    scriptSig: CScript,
+    scriptPubKey: CScript,
+    amount: Optional[int] = None,
+    witness: Optional[CScriptWitness] = None,
+    *,
+    spent_outputs: Optional[List[CTxOut]] = None
+) -> bool:
     flags = set([SCRIPT_VERIFY_STRICTENC])
     if witness:
         # https://github.com/Simplexum/python-bitcointx/blob/648ad8f45ff853bf9923c6498bfa0648b3d7bcbd/bitcointx/core/scripteval.py#L1250-L1252
         flags.add(SCRIPT_VERIFY_P2SH)
         flags.add(SCRIPT_VERIFY_WITNESS)
     try:
-        VerifyScript(scriptSig, scriptPubKey, tx, i,
-                 flags=flags, amount=amount, witness=witness)
+        VerifyScript(
+            scriptSig, scriptPubKey, tx, i, flags=flags, amount=amount,
+            witness=witness, spent_outputs=spent_outputs)
     except ValidationError as e:
         return False
     return True

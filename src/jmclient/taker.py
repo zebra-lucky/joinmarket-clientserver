@@ -12,7 +12,8 @@ from jmbase import get_log, bintohex, hexbin
 from jmclient.support import (calc_cj_fee, fidelity_bond_weighted_order_choose, choose_orders,
                               choose_sweep_orders)
 from jmclient.wallet import (estimate_tx_fee, compute_tx_locktime,
-                             FidelityBondMixin, UnknownAddressForLabel)
+                             FidelityBondMixin, UnknownAddressForLabel,
+                             TaprootWallet)
 from jmclient.podle import generate_podle, get_podle_commitments
 from jmclient.wallet_service import WalletService
 from jmclient.fidelity_bond import FidelityBondProof
@@ -284,6 +285,8 @@ class Taker(object):
                 allowed_types = ["swreloffer", "swabsoffer"]
             elif self.wallet_service.get_txtype() == "p2wpkh":
                 allowed_types = ["sw0reloffer", "sw0absoffer"]
+            elif self.wallet_service.get_txtype() == "p2tr":
+                allowed_types = ["trreloffer", "trabsoffer"]
             else:
                 jlog.error("Unrecognized wallet type, taker cannot continue.")
                 return False
@@ -374,6 +377,8 @@ class Taker(object):
                 allowed_types = ["swreloffer", "swabsoffer"]
             elif self.wallet_service.get_txtype() == "p2wpkh":
                 allowed_types = ["sw0reloffer", "sw0absoffer"]
+            elif self.wallet_service.get_txtype() == "p2tr":
+                allowed_types = ["trreloffer", "trabsoffer"]
             else:
                 jlog.error("Unrecognized wallet type, taker cannot continue.")
                 return False
@@ -679,8 +684,11 @@ class Taker(object):
                 jlog.debug("Junk signature: " + str(sig_deserialized) + \
                           ", not attempting to verify")
                 break
-            # The second case here is kept for backwards compatibility.
-            if len(sig_deserialized) == 2:
+            # The third case here is kept for backwards compatibility.
+            if len(sig_deserialized) == 1:
+                ver_sig = sig_deserialized[0]
+                ver_pub = None
+            elif len(sig_deserialized) == 2:
                 ver_sig, ver_pub = sig_deserialized
             elif len(sig_deserialized) == 3:
                 ver_sig, ver_pub, _ = sig_deserialized
@@ -689,10 +697,17 @@ class Taker(object):
                 break
 
             scriptPubKey = btc.CScript(utxo_data[i]['script'])
-            is_witness_input = scriptPubKey.is_p2sh() or scriptPubKey.is_witness_v0_keyhash()
+            is_witness_input = (scriptPubKey.is_p2sh()
+                                or scriptPubKey.is_witness_v0_keyhash()
+                                or scriptPubKey.is_witness_v1_taproot())
             ver_amt = utxo_data[i]['value'] if is_witness_input else None
-            witness = btc.CScriptWitness(
-                [ver_sig, ver_pub]) if is_witness_input else None
+            if is_witness_input:
+                if ver_pub:
+                    witness = btc.CScriptWitness([ver_sig, ver_pub])
+                else:
+                    witness = btc.CScriptWitness([ver_sig])
+            else:
+                witness = None
 
             # don't attempt to parse `pub` as pubkey unless it's valid.
             if scriptPubKey.is_p2sh():
@@ -704,13 +719,20 @@ class Taker(object):
 
             if scriptPubKey.is_witness_v0_keyhash():
                 scriptSig = btc.CScript(b'')
+            elif scriptPubKey.is_witness_v1_taproot():
+                scriptSig = btc.CScript(b'')
             elif scriptPubKey.is_p2sh():
                 scriptSig = btc.CScript([s])
             else:
                 scriptSig = btc.CScript([ver_sig, ver_pub])
 
+            spent_outputs = None
+            wallet = self.wallet_service.wallet
+            if isinstance(wallet, TaprootWallet):
+                spent_outputs = wallet.get_spent_outputs(self.latest_tx)
             sig_good = btc.verify_tx_input(self.latest_tx, u[0], scriptSig,
-                    scriptPubKey, amount=ver_amt, witness=witness)
+                    scriptPubKey, amount=ver_amt, witness=witness,
+                    spent_outputs=spent_outputs)
 
             if sig_good:
                 jlog.debug('found good sig at index=%d' % (u[0]))

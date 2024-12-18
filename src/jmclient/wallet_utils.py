@@ -12,9 +12,10 @@ from itertools import islice, chain
 from typing import Callable, Optional, Tuple, Union
 from jmclient import (get_network, WALLET_IMPLEMENTATIONS, Storage, podle,
     jm_single, WalletError, BaseWallet, VolatileStorage,
-    StoragePasswordError, is_segwit_mode, SegwitLegacyWallet, LegacyWallet,
-    SegwitWallet, FidelityBondMixin, FidelityBondWatchonlyWallet,
-    is_native_segwit_mode, load_program_config, add_base_options, check_regtest)
+    StoragePasswordError, is_taproot_mode, is_segwit_mode, SegwitLegacyWallet,
+    LegacyWallet, SegwitWallet, FidelityBondMixin, FidelityBondWatchonlyWallet,
+    TaprootWallet, is_native_segwit_mode, load_program_config,
+    add_base_options, check_regtest, JMClientProtocolFactory, start_reactor)
 from jmclient.blockchaininterface import (BitcoinCoreInterface,
     BitcoinCoreNoHistoryInterface)
 from jmclient.wallet_service import WalletService
@@ -24,9 +25,10 @@ from jmbase.support import (get_password, jmprint, EXIT_FAILURE,
                             cli_prompt_user_yesno)
 
 from .cryptoengine import TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WPKH, \
-    TYPE_SEGWIT_WALLET_FIDELITY_BONDS
+    TYPE_SEGWIT_WALLET_FIDELITY_BONDS, TYPE_P2TR
 from .output import fmt_utxo
 import jmbitcoin as btc
+from .descriptor import descsum_create
 
 
 # used for creating new wallets
@@ -557,7 +559,12 @@ def wallet_display(wallet_service, showprivkey, displayall=False,
                 path = wallet_service.get_path(m, address_type, k)
                 addr = wallet_service.get_address_from_path(path)
                 if k >= unused_index:
-                    gap_addrs.append(addr)
+                    if isinstance(wallet_service.wallet, TaprootWallet):
+                        P = wallet_service.get_pubkey(m, address_type, k)
+                        desc = f'tr({bytes(P)[1:].hex()})'
+                        gap_addrs.append(f'{descsum_create(desc)}')
+                    else:
+                        gap_addrs.append(addr)
                 label = wallet_service.get_address_label(addr)
                 balance, status = get_addr_status(
                     path, utxos[m], utxos_enabled[m], k >= unused_index, address_type)
@@ -577,8 +584,12 @@ def wallet_display(wallet_service, showprivkey, displayall=False,
             # displayed for user deposit.
             # It also does not apply to fidelity bond addresses which are created manually.
             if address_type == BaseWallet.ADDRESS_TYPE_EXTERNAL and wallet_service.bci is not None:
-                wallet_service.bci.import_addresses(gap_addrs,
-                                                    wallet_service.get_wallet_name())
+                if isinstance(wallet_service.wallet, TaprootWallet):
+                    wallet_service.bci.import_descriptors(
+                        gap_addrs, wallet_service.get_wallet_name())
+                else:
+                    wallet_service.bci.import_addresses(
+                        gap_addrs, wallet_service.get_wallet_name())
             wallet_service.set_next_index(m, address_type, unused_index)
             path = wallet_service.get_path_repr(wallet_service.get_path(m, address_type))
             branchlist.append(WalletViewBranch(path, m, address_type, entrylist,
@@ -755,7 +766,8 @@ def wallet_generate_recover_bip39(method: str,
 
     password = enter_wallet_password_callback()
     if not password:
-        return False
+        password = None
+        # return False
 
     wallet_name = enter_wallet_file_name_callback()
     if wallet_name == "cancelled":
@@ -765,7 +777,10 @@ def wallet_generate_recover_bip39(method: str,
     if not wallet_name:
         wallet_name = default_wallet_name
     wallet_path = os.path.join(walletspath, wallet_name)
-    support_fidelity_bonds = enter_do_support_fidelity_bonds()
+    if is_taproot_mode():
+        support_fidelity_bonds = False
+    else:
+        support_fidelity_bonds = enter_do_support_fidelity_bonds()
     wallet_cls = get_wallet_cls(get_configured_wallet_type(support_fidelity_bonds))
     wallet = create_wallet(wallet_path, password, mixdepth, wallet_cls,
                            entropy=entropy,
@@ -779,7 +794,13 @@ def wallet_generate_recover_bip39(method: str,
 def wallet_generate_recover(method, walletspath,
                             default_wallet_name='wallet.jmdat',
                             mixdepth=DEFAULT_MIXDEPTH):
-    if is_segwit_mode():
+    if is_taproot_mode():
+        return wallet_generate_recover_bip39(method, walletspath,
+            default_wallet_name, cli_display_user_words, cli_user_mnemonic_entry,
+            cli_get_wallet_passphrase_check, cli_get_wallet_file_name,
+            cli_do_use_mnemonic_extension, cli_get_mnemonic_extension,
+            cli_do_support_fidelity_bonds, mixdepth=mixdepth)
+    elif is_segwit_mode():
         #Here using default callbacks for scripts (not used in Qt)
         return wallet_generate_recover_bip39(method, walletspath,
             default_wallet_name, cli_display_user_words, cli_user_mnemonic_entry,
@@ -1429,7 +1450,9 @@ def wallet_createwatchonly(wallet_root_path, master_pub_key):
 
 def get_configured_wallet_type(support_fidelity_bonds):
     configured_type = TYPE_P2PKH
-    if is_segwit_mode():
+    if is_taproot_mode():
+        return TYPE_P2TR
+    elif is_segwit_mode():
         if is_native_segwit_mode():
             configured_type = TYPE_P2WPKH
         else:

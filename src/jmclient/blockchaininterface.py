@@ -503,6 +503,49 @@ class BitcoinCoreInterface(BlockchainInterface):
             self.import_addresses(addresses - imported_addresses, wallet_name)
         return import_needed
 
+    def import_descriptors(self, desc_list: Iterable[str], wallet_name: str,
+                         restart_cb: Callable[[str], None] = None) -> None:
+        requests = []
+        for desc in desc_list:
+            requests.append({
+                "desc": desc,
+                "timestamp": "now",
+                "label": wallet_name,
+                "internal": False
+            })
+
+        result = self._rpc('importdescriptors', [requests])
+
+        num_failed = 0
+        for row in result:
+            if row['success'] == False:
+                num_failed += 1
+                # don't try/catch, assume failure always has error message
+                log.warn(row['error']['message'])
+        if num_failed > 0:
+            fatal_msg = ("Fatal sync error: import of {} address(es) failed for "
+                         "some reason. To prevent coin or privacy loss, "
+                         "Joinmarket will not load a wallet in this conflicted "
+                         "state. Try using a new Bitcoin Core wallet to sync this "
+                         "Joinmarket wallet, or use a new Joinmarket wallet."
+                         "".format(num_failed))
+            if restart_cb:
+                restart_cb(fatal_msg)
+            else:
+                jmprint(fatal_msg, "important")
+            sys.exit(EXIT_FAILURE)
+
+    def import_descriptors_if_needed(self, descriptors: Set[str], wallet_name: str) -> bool:
+        if wallet_name in self._rpc('listlabels', []):
+            imported_descriptors = set(self._rpc('getaddressesbylabel',
+                                                 [wallet_name]).keys())
+        else:
+            imported_descriptors = set()
+        import_needed = not descriptors.issubset(imported_descriptors)
+        if import_needed:
+            self.import_descriptors(descriptors - imported_descriptors, wallet_name)
+        return import_needed
+
     def get_deser_from_gettransaction(self, rpcretval: dict) -> Optional[btc.CMutableTransaction]:
         if not "hex" in rpcretval:
             log.info("Malformed gettransaction output")
@@ -530,6 +573,22 @@ class BitcoinCoreInterface(BlockchainInterface):
             return None
         if "confirmations" not in res:
             log.warning("Malformed gettransaction result: " + str(res))
+            return None
+        return res
+
+    def getrawtransaction(self, txid: bytes) -> Optional[dict]:
+        htxid = bintohex(txid)
+        try:
+            res = self._rpc("getrawtransaction", [htxid])
+        except JsonRpcError as e:
+            log.warn("Failed getrawtransaction call; JsonRpcError: " + repr(e))
+            return None
+        except Exception as e:
+            log.warn("Failed getrawtransaction call; unexpected error:")
+            log.warn(str(e))
+            return None
+        if res is None:
+            # happens in case of rpc connection failure:
             return None
         return res
 
@@ -720,6 +779,8 @@ class RegtestBitcoinCoreMixin():
         if self._rpc('setgenerate', [True, reqd_blocks]):
         raise Exception("Something went wrong")
         """
+        if not self.destn_addr:
+            self.destn_addr = self._rpc("getnewaddress", [])
         # now we do a custom create transaction and push to the receiver
         txid = self._rpc('sendtoaddress', [receiving_addr, amt])
         if not txid:
@@ -736,6 +797,7 @@ class BitcoinCoreNoHistoryInterface(BitcoinCoreInterface, RegtestBitcoinCoreMixi
         self.import_addresses_call_count = 0
         self.wallet_name = None
         self.scan_result = None
+        self.destn_addr = None
 
     def import_addresses_if_needed(self, addresses: Set[str], wallet_name: str) -> bool:
         self.import_addresses_call_count += 1
@@ -793,7 +855,8 @@ class BitcoinCoreNoHistoryInterface(BitcoinCoreInterface, RegtestBitcoinCoreMixi
         wallet.disable_new_scripts = True
 
     def tick_forward_chain(self, n: int) -> None:
-        self.destn_addr = self._rpc("getnewaddress", [])
+        if not self.destn_addr:
+            self.destn_addr = self._rpc("getnewaddress", [])
         super().tick_forward_chain(n)
 
 
@@ -810,7 +873,7 @@ class RegtestBitcoinCoreInterface(BitcoinCoreInterface, RegtestBitcoinCoreMixin)
         self.absurd_fees = False
         self.simulating = False
         self.shutdown_signal = False
-        self.destn_addr = self._rpc("getnewaddress", [])
+        self.destn_addr = None
 
     def estimate_fee_per_kb(self, tx_fees: int) -> int:
         if not self.absurd_fees:
@@ -830,6 +893,8 @@ class RegtestBitcoinCoreInterface(BitcoinCoreInterface, RegtestBitcoinCoreMixin)
         self.tick_forward_chain(1)
 
     def simulate_blocks(self) -> None:
+        if not self.destn_addr:
+            self.destn_addr = self._rpc("getnewaddress", [])
         self.tickchainloop = task.LoopingCall(self.tickchain)
         self.tickchainloop.start(self.tick_forward_chain_interval)
         self.simulating = True

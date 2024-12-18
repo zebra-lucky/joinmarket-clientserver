@@ -16,9 +16,10 @@ from jmclient.configure import jm_single, get_log
 from jmclient.output import fmt_tx_data
 from jmclient.blockchaininterface import (INF_HEIGHT, BitcoinCoreInterface,
     BitcoinCoreNoHistoryInterface)
-from jmclient.wallet import FidelityBondMixin, BaseWallet
+from jmclient.wallet import FidelityBondMixin, BaseWallet, TaprootWallet
 from jmbase import (stop_reactor, hextobin, utxo_to_utxostr,
                     jmprint, EXIT_SUCCESS, EXIT_FAILURE)
+from .descriptor import descsum_create
 
 """Wallet service
 
@@ -626,8 +627,21 @@ class WalletService(Service):
         # we ensure that all addresses that will be displayed (see wallet_utils.py,
         # function wallet_display()) are imported by importing gap limit beyond current
         # index:
-        self.bci.import_addresses(self.collect_addresses_gap(), self.get_wallet_name(),
-                                  self.restart_callback)
+        if isinstance(self.wallet, TaprootWallet):
+            pubkeys = self.collect_pubkeys_gap()
+            desc_scripts = [f'tr({bytes(P)[1:].hex()})' for P in pubkeys]
+            descriptors = set()
+            for desc in desc_scripts:
+                descriptors.add(f'{descsum_create(desc)}')
+            self.bci.import_descriptors(
+                descriptors,
+                self.get_wallet_name(),
+                self.restart_callback)
+        else:
+            self.bci.import_addresses(
+                self.collect_addresses_gap(),
+                self.get_wallet_name(),
+                self.restart_callback)
 
         if isinstance(self.wallet, FidelityBondMixin):
             mixdepth = FidelityBondMixin.FIDELITY_BOND_MIXDEPTH
@@ -754,10 +768,19 @@ class WalletService(Service):
         """
         jlog.debug("requesting detailed wallet history")
         wallet_name = self.get_wallet_name()
-        addresses, saved_indices = self.collect_addresses_init()
 
-        import_needed = self.bci.import_addresses_if_needed(addresses,
-            wallet_name)
+        if isinstance(self.wallet, TaprootWallet):
+            pubkeys, saved_indices = self.collect_pubkeys_init()
+            desc_scripts = [f'tr({bytes(P)[1:].hex()})' for P in pubkeys]
+            descriptors= set()
+            for desc in desc_scripts:
+                descriptors.add(f'{descsum_create(desc)}')
+            import_needed = self.bci.import_descriptors_if_needed(
+                descriptors, wallet_name)
+        else:
+            addresses, saved_indices = self.collect_addresses_init()
+            import_needed = self.bci.import_addresses_if_needed(
+                addresses, wallet_name)
         if import_needed:
             self.display_rescan_message_and_system_exit(self.restart_callback)
             return
@@ -963,10 +986,22 @@ class WalletService(Service):
         if self.bci is not None and hasattr(self.bci, 'import_addresses'):
             self.bci.import_addresses([addr], self.wallet.get_wallet_name())
 
+    def import_pubkey(self, pubkey):
+        if self.bci is not None and hasattr(self.bci, 'import_descriptors'):
+            desc_script = f'tr({bytes(pubkey)[1:].hex()})'
+            descriptor = descsum_create(desc_script)
+            self.bci.import_descriptors(
+                [descriptor], self.wallet.get_wallet_name())
+
     def get_internal_addr(self, mixdepth):
-        addr = self.wallet.get_internal_addr(mixdepth)
-        self.import_addr(addr)
-        return addr
+        if isinstance(self.wallet, TaprootWallet):
+            pubkey = self.wallet.get_internal_pubkey(mixdepth)
+            self.import_pubkey(pubkey)
+            return self.wallet.pubkey_to_addr(pubkey)
+        else:
+            addr = self.wallet.get_internal_addr(mixdepth)
+            self.import_addr(addr)
+            return addr
 
     def collect_addresses_init(self) -> Tuple[Set[str], Dict[int, List[int]]]:
         """ Collects the "current" set of addresses,
@@ -1002,6 +1037,32 @@ class WalletService(Service):
                 addresses.add(self.get_addr(md, address_type, timenumber))
         return addresses, saved_indices
 
+    def collect_pubkeys_init(self) -> Tuple[Set[str], Dict[int, List[int]]]:
+        """ Collects the "current" set of pubkeys,
+        as defined by the indices recorded in the wallet's
+        index cache (persisted in the wallet file usually).
+        Note that it collects up to the current indices plus
+        the gap limit.
+        """
+        pubkeys = set()
+        saved_indices = dict()
+
+        for md in range(self.max_mixdepth + 1):
+            saved_indices[md] = [0, 0]
+            for address_type in (BaseWallet.ADDRESS_TYPE_EXTERNAL,
+                                 BaseWallet.ADDRESS_TYPE_INTERNAL):
+                next_unused = self.get_next_unused_index(md, address_type)
+                for index in range(next_unused):
+                    pubkeys.add(self.get_pubkey(md, address_type, index))
+                for index in range(self.gap_limit):
+                    pubkeys.add(self.get_new_pubkey(
+                        md, address_type, validate_cache=False))
+                # reset the indices to the value we had before the
+                # new address calls:
+                self.set_next_index(md, address_type, next_unused)
+                saved_indices[md][address_type] = next_unused
+        return pubkeys, saved_indices
+
     def collect_addresses_gap(self, gap_limit=None):
         gap_limit = gap_limit or self.gap_limit
         addresses = set()
@@ -1015,10 +1076,28 @@ class WalletService(Service):
                 self.set_next_index(md, address_type, old_next)
         return addresses
 
+    def collect_pubkeys_gap(self, gap_limit=None):
+        gap_limit = gap_limit or self.gap_limit
+        pubkeys = set()
+        for md in range(self.max_mixdepth + 1):
+            for address_type in (BaseWallet.ADDRESS_TYPE_INTERNAL,
+                                 BaseWallet.ADDRESS_TYPE_EXTERNAL):
+                old_next = self.get_next_unused_index(md, address_type)
+                for index in range(gap_limit):
+                    pubkeys.add(self.get_new_pubkey(
+                        md, address_type, validate_cache=False))
+                self.set_next_index(md, address_type, old_next)
+        return pubkeys
+
     def get_external_addr(self, mixdepth):
-        addr = self.wallet.get_external_addr(mixdepth)
-        self.import_addr(addr)
-        return addr
+        if isinstance(self.wallet, TaprootWallet):
+            pubkey = self.wallet.get_external_pubkey(mixdepth)
+            self.import_pubkey(pubkey)
+            return self.wallet.pubkey_to_addr(pubkey)
+        else:
+            addr = self.wallet.get_external_addr(mixdepth)
+            self.import_addr(addr)
+            return addr
 
     def __getattr__(self, attr):
         # any method not present here is passed

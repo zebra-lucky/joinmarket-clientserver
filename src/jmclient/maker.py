@@ -171,6 +171,9 @@ class Maker(object):
             elif self.wallet_service.get_txtype() == 'p2wpkh':
                 sig, pub = [a for a in iter(tx.wit.vtxinwit[index].scriptWitness)]
                 sigmsg = btc.CScript([sig]) + btc.CScript(pub)
+            elif self.wallet_service.get_txtype() == 'p2tr':
+                sig = [a for a in iter(tx.wit.vtxinwit[index].scriptWitness)]
+                sigmsg = btc.CScript(sig)
             else:
                 jlog.error("Taker has unknown wallet type")
                 sys.exit(EXIT_FAILURE)

@@ -953,6 +953,12 @@ def update_persist_config(section: str, name: str, value: Any) -> bool:
         f.writelines([x.encode("utf-8") for x in newlines])
     return True
 
+def is_taproot_mode() -> bool:
+    c = jm_single().config
+    if not c.has_option('POLICY', 'taproot'):
+        return False
+    return c.get('POLICY', 'taproot') != 'false'
+
 def is_segwit_mode() -> bool:
     return jm_single().config.get('POLICY', 'segwit') != 'false'
 

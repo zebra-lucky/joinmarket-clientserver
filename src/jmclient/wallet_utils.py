@@ -1587,7 +1587,9 @@ async def open_test_wallet_maybe(
                 del kwargs['password']
             if 'read_only' in kwargs:
                 del kwargs['read_only']
-            return test_wallet_cls(storage, **kwargs)
+            wallet = test_wallet_cls(storage, **kwargs)
+            await wallet.async_init(storage, **kwargs)
+            return wallet
 
     if wallet_password_stdin is True:
         password = read_password_stdin()

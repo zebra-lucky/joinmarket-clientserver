@@ -220,6 +220,9 @@ def get_password(msg): #pragma: no cover
         password = password.encode('utf-8')
     return password
 
+def is_running_from_pytest():
+    return bool(environ.get("PYTEST_CURRENT_TEST"))
+
 def lookup_appdata_folder(appname):
     """ Given an appname as a string,
     return the correct directory for storing

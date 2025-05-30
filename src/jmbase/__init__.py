@@ -10,7 +10,7 @@ from .support import (get_log, chunks, debug_silence, jmprint,
                       IndentedHelpFormatterWithNL, wrapped_urlparse,
                       bdict_sdict_convert, random_insert, dict_factory,
                       cli_prompt_user_value, cli_prompt_user_yesno,
-                      async_hexbin, twisted_sys_exit)
+                      async_hexbin, twisted_sys_exit, is_running_from_pytest)
 from .proof_of_work import get_pow, verify_pow
 from .twisted_utils import (stop_reactor, is_hs_uri, get_tor_agent,
                             get_nontor_agent, JMHiddenService,

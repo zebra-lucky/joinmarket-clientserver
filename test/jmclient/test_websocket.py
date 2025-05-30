@@ -99,8 +99,10 @@ class WebsocketTestBase(object):
                                 test_tx_hex_txid)
 
     def tearDown(self):
+        reactor.disconnectAll()
         for dc in reactor.getDelayedCalls():
-            dc.cancel()
+            if not dc.cancelled:
+                dc.cancel()
         self.client_connector.disconnect()
         return self.stopListening()
 

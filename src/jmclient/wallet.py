@@ -1659,8 +1659,10 @@ class BaseWallet(object):
 
     async def _populate_maps(self, paths):
         for path in paths:
-            self._script_map[await self.get_script_from_path(path)] = path
-            self._addr_map[await self.get_address_from_path(path)] = path
+            script = await self.get_script_from_path(path)
+            self._script_map[script] = path
+            addr = await self.get_address_from_path(path)
+            self._addr_map[addr] = path
 
     def addr_to_path(self, addr):
         assert isinstance(addr, str)

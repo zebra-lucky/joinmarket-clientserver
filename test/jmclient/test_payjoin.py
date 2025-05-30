@@ -6,8 +6,8 @@ Test doing payjoins over tcp client/server
 import os
 
 import pytest
-from twisted.internet import reactor
-from twisted.web.server import Site
+from twisted.internet import reactor, defer
+from twisted.web.server import Site, NOT_DONE_YET
 from twisted.web.client import readBody
 from twisted.web.http_headers import Headers
 from twisted.trial import unittest
@@ -25,7 +25,7 @@ from jmclient import (load_test_config, jm_single,
                       JMBIP78ReceiverManager)
 from jmclient.payjoin import make_payjoin_request_params, make_payment_psbt
 from jmclient.payjoin import process_payjoin_proposal_from_server
-from commontest import make_wallets
+from commontest import make_wallets, TrialTestCase
 from test_coinjoin import make_wallets_to_list, sync_wallets
 
 pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
@@ -47,12 +47,19 @@ class DummyBIP78ReceiverResource(JMHTTPResource):
     def render_POST(self, request):
         proposed_tx = request.content
         payment_psbt_base64 = proposed_tx.read().decode("utf-8")
-        retval = self.bip78_receiver_manager.receive_proposal_from_sender(
-            payment_psbt_base64, request.args)
-        assert retval[0]
-        content = retval[1].encode("utf-8")
-        request.setHeader(b"content-length", ("%d" % len(content)))
-        return content
+        d = defer.Deferred.fromCoroutine(
+            self.bip78_receiver_manager.receive_proposal_from_sender(
+                payment_psbt_base64, request.args))
+
+        def _delayedRender(result, request):
+            assert result[0]
+            content = result[1].encode("utf-8")
+            request.setHeader(b"content-length", ("%d" % len(content)))
+            request.write(content)
+            request.finish()
+
+        d.addCallback(_delayedRender, request)
+        return NOT_DONE_YET
 
 class PayjoinTestBase(object):
     """ This tests that a payjoin invoice and
@@ -70,18 +77,20 @@ class PayjoinTestBase(object):
         jm_single().bc_interface.tick_forward_chain_interval = 5
         jm_single().bc_interface.simulate_blocks()
 
-    def do_test_payment(self, wc1, wc2, amt=1.1):
+    async def do_test_payment(self, wc1, wc2, amt=1.1):
         wallet_structures = [self.wallet_structure] * 2
         wallet_cls = (wc1, wc2)
         self.wallet_services = []
-        self.wallet_services.append(make_wallets_to_list(make_wallets(
+        wallets = await make_wallets(
             1, wallet_structures=[wallet_structures[0]],
-            mean_amt=self.mean_amt, wallet_cls=wallet_cls[0]))[0])
-        self.wallet_services.append(make_wallets_to_list(make_wallets(
+            mean_amt=self.mean_amt, wallet_cls=wallet_cls[0])
+        self.wallet_services.append(make_wallets_to_list(wallets)[0])
+        wallets = await make_wallets(
                 1, wallet_structures=[wallet_structures[1]],
-                mean_amt=self.mean_amt, wallet_cls=wallet_cls[1]))[0])
+                mean_amt=self.mean_amt, wallet_cls=wallet_cls[1])
+        self.wallet_services.append(make_wallets_to_list(wallets)[0])
         jm_single().bc_interface.tickchain()
-        sync_wallets(self.wallet_services)
+        await sync_wallets(self.wallet_services)
 
         # For accounting purposes, record the balances
         # at the start.
@@ -93,6 +102,7 @@ class PayjoinTestBase(object):
             return self.port.stopListening()
         b78rm = JMBIP78ReceiverManager(self.wallet_services[0], 0,
                                        self.cj_amount, 47083)
+        await b78rm.async_init(self.wallet_services[0], 0, self.cj_amount)
         resource = DummyBIP78ReceiverResource(jmprint, cbStopListening, b78rm)
         self.site = Site(resource)
         self.site.displayTracebacks = False
@@ -109,7 +119,7 @@ class PayjoinTestBase(object):
                                 safe=":/")
         self.manager = parse_payjoin_setup(bip78_uri, self.wallet_services[1], 0)
         self.manager.mode = "testing"
-        success, msg = make_payment_psbt(self.manager)
+        success, msg = await make_payment_psbt(self.manager)
         assert success, msg
         params = make_payjoin_request_params(self.manager)
         # avoiding backend daemon (testing only jmclient code here),
@@ -120,38 +130,52 @@ class PayjoinTestBase(object):
         url_parts = list(wrapped_urlparse(serv))
         url_parts[4] = urlencode(params).encode("utf-8")
         destination_url = urlparse.urlunparse(url_parts)
-        d = agent.request(b"POST", destination_url,
-                          Headers({"Content-Type": ["text/plain"]}),
-                          bodyProducer=body)
-        d.addCallback(bip78_receiver_response, self.manager)
-        return d
+        response = await agent.request(
+            b"POST", destination_url,
+            Headers({"Content-Type": ["text/plain"]}),
+            bodyProducer=body)
+        await bip78_receiver_response(response, self.manager)
+        return response
 
     def tearDown(self):
         for dc in reactor.getDelayedCalls():
             dc.cancel()
-        res = final_checks(self.wallet_services, self.cj_amount,
-                           self.manager.final_psbt.get_fee(),
-                           self.ssb, self.rsb)
-        assert res, "final checks failed"
+        d = defer.ensureDeferred(
+            final_checks(self.wallet_services, self.cj_amount,
+                         self.manager.final_psbt.get_fee(),
+                         self.ssb, self.rsb))
+        assert d, "final checks failed"
 
-class TrialTestPayjoin1(PayjoinTestBase, unittest.TestCase):
+
+class TrialTestPayjoin1(PayjoinTestBase, TrialTestCase):
+
     def test_payment(self):
-        return self.do_test_payment(SegwitLegacyWallet, SegwitLegacyWallet)
+        coro = self.do_test_payment(SegwitLegacyWallet, SegwitLegacyWallet)
+        d = defer.Deferred.fromCoroutine(coro)
+        return d
 
-class TrialTestPayjoin2(PayjoinTestBase, unittest.TestCase):
+class TrialTestPayjoin2(PayjoinTestBase, TrialTestCase):
+
     def test_bech32_payment(self):
-        return self.do_test_payment(SegwitWallet, SegwitWallet)
+        coro = self.do_test_payment(SegwitWallet, SegwitWallet)
+        d = defer.Deferred.fromCoroutine(coro)
+        return d
 
-class TrialTestPayjoin3(PayjoinTestBase, unittest.TestCase):
+class TrialTestPayjoin3(PayjoinTestBase, TrialTestCase):
+
     def test_multi_input(self):
         # wallet structure and amt are chosen so that the sender
         # will need 3 utxos rather than 1 (to pay 4.5 from 2,2,2).
         self.wallet_structure = [3, 1, 0, 0, 0]
-        return self.do_test_payment(SegwitWallet, SegwitWallet, amt=4.5)
+        coro = self.do_test_payment(SegwitWallet, SegwitWallet, amt=4.5)
+        d = defer.Deferred.fromCoroutine(coro)
+        return d
 
-class TrialTestPayjoin4(PayjoinTestBase, unittest.TestCase):
+class TrialTestPayjoin4(PayjoinTestBase, TrialTestCase):
+
     def reset_fee(self, res):
         jm_single().config.set("POLICY", "txfees", self.old_txfees)
+
     def test_low_feerate(self):
         self.old_txfees = jm_single().config.get("POLICY", "tx_fees")
         # To set such that randomization cannot pull it below minfeerate
@@ -160,25 +184,27 @@ class TrialTestPayjoin4(PayjoinTestBase, unittest.TestCase):
         # as noted in https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/babad1963992965e933924b6c306ad9da89989e0/jmclient/jmclient/payjoin.py#L802-L809
         # , we increase from that by 2%.
         jm_single().config.set("POLICY", "tx_fees", "1404")
-        d = self.do_test_payment(SegwitWallet, SegwitWallet)
+        coro = self.do_test_payment(SegwitWallet, SegwitWallet)
+        d = defer.Deferred.fromCoroutine(coro)
         d.addCallback(self.reset_fee)
         return d
 
-def bip78_receiver_response(response, manager):
-    d = readBody(response)
+async def bip78_receiver_response(response, manager):
+    body = await readBody(response)
     # if the response code is not 200 OK, we must assume payjoin
     # attempt has failed, and revert to standard payment.
     if int(response.code) != 200:
-        d.addCallback(process_receiver_errormsg, response.code)
+        await process_receiver_errormsg(body, response.code)
         return
-    d.addCallback(process_receiver_psbt, manager)
+    await process_receiver_psbt(body, manager)
 
 def process_receiver_errormsg(r, c):
     print("Failed: r, c: ", r, c)
     assert False
 
-def process_receiver_psbt(response, manager):
-    process_payjoin_proposal_from_server(response.decode("utf-8"), manager)
+async def process_receiver_psbt(response, manager):
+    await process_payjoin_proposal_from_server(
+        response.decode("utf-8"), manager)
 
 def getbals(wallet_service, mixdepth):
     """ Retrieves balances for a mixdepth and the 'next'
@@ -186,7 +212,8 @@ def getbals(wallet_service, mixdepth):
     bbm = wallet_service.get_balance_by_mixdepth()
     return (bbm[mixdepth], bbm[(mixdepth + 1) % (wallet_service.mixdepth + 1)])
 
-def final_checks(wallet_services, amount, txfee, ssb, rsb, source_mixdepth=0):
+async def final_checks(wallet_services, amount, txfee, ssb, rsb,
+                       source_mixdepth=0):
     """We use this to check that the wallet contents are
     as we've expected according to the test case.
     amount is the payment amount going from spender to receiver.
@@ -195,7 +222,7 @@ def final_checks(wallet_services, amount, txfee, ssb, rsb, source_mixdepth=0):
     of two entries, source and destination mixdepth respectively.
     """
     jm_single().bc_interface.tickchain()
-    sync_wallets(wallet_services)
+    await sync_wallets(wallet_services)
     spenderbals = getbals(wallet_services[1], source_mixdepth)
     receiverbals = getbals(wallet_services[0], source_mixdepth)
     # is the payment received?

@@ -20,7 +20,8 @@ from jmclient.blockchaininterface import (INF_HEIGHT, BitcoinCoreInterface,
 from jmclient.wallet import (FidelityBondMixin, BaseWallet, TaprootWallet,
                              FrostWallet)
 from jmbase import (stop_reactor, hextobin, utxo_to_utxostr,
-                    twisted_sys_exit, jmprint, EXIT_SUCCESS, EXIT_FAILURE)
+                    twisted_sys_exit, jmprint, EXIT_SUCCESS, EXIT_FAILURE,
+                    is_running_from_pytest)
 from .descriptor import descsum_create
 
 """Wallet service
@@ -706,7 +707,8 @@ class WalletService(Service):
         #theres also a sys.exit() in BitcoinCoreInterface.import_addresses()
         #perhaps have sys.exit() placed inside the restart_cb that only
         # CLI scripts will use
-        if isinstance(self.bci, BitcoinCoreInterface):
+        if (isinstance(self.bci, BitcoinCoreInterface)
+                and not is_running_from_pytest()):
             #Exit conditions cannot be included in tests
             restart_msg = ("Use `bitcoin-cli rescanblockchain` if you're "
                            "recovering an existing wallet from backup seed\n"

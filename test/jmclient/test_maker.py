@@ -1,5 +1,10 @@
 import datetime
 
+from unittest import IsolatedAsyncioTestCase
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 import jmbitcoin as btc
 from jmclient import Maker, load_test_config, jm_single, WalletService, VolatileStorage, \
     SegwitWalletFidelityBonds, get_network
@@ -11,6 +16,7 @@ import struct
 import binascii
 from itertools import chain
 import pytest
+from _pytest.monkeypatch import MonkeyPatch
 
 
 class OfflineMaker(Maker):
@@ -101,91 +107,102 @@ def create_tx_and_offerlist(cj_addr, cj_change_addr, other_output_addrs,
     return tx, offerlist
 
 
-def test_verify_unsigned_tx_sw_valid(setup_env_nodeps):
-    jm_single().config.set("POLICY", "segwit", "true")
+class AsyncioTestCase(IsolatedAsyncioTestCase):
 
-    p2sh_gen = address_p2sh_generator()
-    p2pkh_gen = address_p2pkh_generator()
+    def setUp(self):
+        jmclient.configure._get_bc_interface_instance_ = \
+            jmclient.configure.get_blockchain_interface_instance
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(jmclient.configure,
+                            'get_blockchain_interface_instance',
+                            lambda x: DummyBlockchainInterface())
+        btc.select_chain_params("bitcoin/regtest")
+        load_test_config()
 
-    wallet = DummyWallet()
-    maker = OfflineMaker(WalletService(wallet))
+    def tearDown(self):
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(jmclient.configure,
+                            'get_blockchain_interface_instance',
+                            jmclient.configure._get_bc_interface_instance_)
 
-    cj_addr, cj_script = next(p2sh_gen)
-    changeaddr, cj_change_script = next(p2sh_gen)
+    async def test_verify_unsigned_tx_sw_valid(self):
+        jm_single().config.set("POLICY", "segwit", "true")
 
-    # test standard cj
-    tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
-        [next(p2sh_gen)[0] for s in range(4)])
+        p2sh_gen = address_p2sh_generator()
+        p2pkh_gen = address_p2pkh_generator()
 
-    assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "standard sw cj"
+        wallet = DummyWallet()
+        await wallet.async_init(wallet.storage)
+        maker = OfflineMaker(WalletService(wallet))
 
-    # test cj with mixed outputs
-    tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
-        list(chain((next(p2sh_gen)[0] for s in range(3)),
-                   (next(p2pkh_gen)[0] for s in range(1)))))
+        cj_addr, cj_script = next(p2sh_gen)
+        changeaddr, cj_change_script = next(p2sh_gen)
 
-    assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "sw cj with p2pkh output"
+        # test standard cj
+        tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
+            [next(p2sh_gen)[0] for s in range(4)])
 
-    # test cj with only p2pkh outputs
-    tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
-        [next(p2pkh_gen)[0] for s in range(4)])
+        assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "standard sw cj"
 
-    assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "sw cj with only p2pkh outputs"
+        # test cj with mixed outputs
+        tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
+            list(chain((next(p2sh_gen)[0] for s in range(3)),
+                       (next(p2pkh_gen)[0] for s in range(1)))))
 
+        assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "sw cj with p2pkh output"
 
-def test_verify_unsigned_tx_nonsw_valid(setup_env_nodeps):
-    jm_single().config.set("POLICY", "segwit", "false")
+        # test cj with only p2pkh outputs
+        tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
+            [next(p2pkh_gen)[0] for s in range(4)])
 
-    p2sh_gen = address_p2sh_generator()
-    p2pkh_gen = address_p2pkh_generator()
+        assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "sw cj with only p2pkh outputs"
 
-    wallet = DummyWallet()
-    maker = OfflineMaker(WalletService(wallet))
+    async def test_verify_unsigned_tx_nonsw_valid(self):
+        jm_single().config.set("POLICY", "segwit", "false")
 
-    cj_addr, cj_script = next(p2pkh_gen)
-    changeaddr, cj_change_script = next(p2pkh_gen)
+        p2sh_gen = address_p2sh_generator()
+        p2pkh_gen = address_p2pkh_generator()
 
-    # test standard cj
-    tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
-        [next(p2pkh_gen)[0] for s in range(4)], offertype='reloffer')
+        wallet = DummyWallet()
+        await wallet.async_init(wallet.storage)
+        maker = OfflineMaker(WalletService(wallet))
 
-    assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "standard nonsw cj"
+        cj_addr, cj_script = next(p2pkh_gen)
+        changeaddr, cj_change_script = next(p2pkh_gen)
 
-    # test cj with mixed outputs
-    tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
-        list(chain((next(p2sh_gen)[0] for s in range(1)),
-                   (next(p2pkh_gen)[0] for s in range(3)))), offertype='reloffer')
+        # test standard cj
+        tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
+            [next(p2pkh_gen)[0] for s in range(4)], offertype='reloffer')
 
-    assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "nonsw cj with p2sh output"
+        assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "standard nonsw cj"
 
-    # test cj with only p2sh outputs
-    tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
-        [next(p2sh_gen)[0] for s in range(4)], offertype='reloffer')
+        # test cj with mixed outputs
+        tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
+            list(chain((next(p2sh_gen)[0] for s in range(1)),
+                       (next(p2pkh_gen)[0] for s in range(3)))), offertype='reloffer')
 
-    assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "nonsw cj with only p2sh outputs"
+        assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "nonsw cj with p2sh output"
 
+        # test cj with only p2sh outputs
+        tx, offerlist = create_tx_and_offerlist(cj_addr, changeaddr,
+            [next(p2sh_gen)[0] for s in range(4)], offertype='reloffer')
 
-def test_freeze_timelocked_utxos(setup_env_nodeps):
-    storage = VolatileStorage()
-    SegwitWalletFidelityBonds.initialize(storage, get_network())
-    wallet = SegwitWalletFidelityBonds(storage)
-    ts = wallet.datetime_to_time_number(
-        datetime.datetime.strptime("2021-07", "%Y-%m"))
-    tl_path = wallet.get_path(
-        wallet.FIDELITY_BOND_MIXDEPTH, wallet.BIP32_TIMELOCK_ID, ts)
-    tl_script = wallet.get_script_from_path(tl_path)
-    utxo = (b'a'*32, 0)
-    wallet.add_utxo(utxo[0], utxo[1], tl_script, 100000000)
-    assert not wallet._utxos.is_disabled(*utxo)
+        assert maker.verify_unsigned_tx(tx, offerlist) == (True, None), "nonsw cj with only p2sh outputs"
 
-    maker = OfflineMaker(WalletService(wallet))
-    maker.freeze_timelocked_utxos()
-    assert wallet._utxos.is_disabled(*utxo)
+    async def test_freeze_timelocked_utxos(self):
+        storage = VolatileStorage()
+        SegwitWalletFidelityBonds.initialize(storage, get_network())
+        wallet = SegwitWalletFidelityBonds(storage)
+        await wallet.async_init(storage)
+        ts = wallet.datetime_to_time_number(
+            datetime.datetime.strptime("2021-07", "%Y-%m"))
+        tl_path = wallet.get_path(
+            wallet.FIDELITY_BOND_MIXDEPTH, wallet.BIP32_TIMELOCK_ID, ts)
+        tl_script = await wallet.get_script_from_path(tl_path)
+        utxo = (b'a'*32, 0)
+        wallet.add_utxo(utxo[0], utxo[1], tl_script, 100000000)
+        assert not wallet._utxos.is_disabled(*utxo)
 
-
-@pytest.fixture
-def setup_env_nodeps(monkeypatch):
-    monkeypatch.setattr(jmclient.configure, 'get_blockchain_interface_instance',
-                        lambda x: DummyBlockchainInterface())
-    btc.select_chain_params("bitcoin/regtest")
-    load_test_config()
+        maker = OfflineMaker(WalletService(wallet))
+        await maker.freeze_timelocked_utxos()
+        assert wallet._utxos.is_disabled(*utxo)

@@ -5,6 +5,9 @@ import os
 import random
 from decimal import Decimal
 from typing import Callable, List, Optional, Set, Tuple, Union
+from unittest import IsolatedAsyncioTestCase
+
+from twisted.trial.unittest import TestCase as TrialTestCase
 
 import jmbitcoin as btc
 from jmbase import (get_log, hextobin, bintohex, dictchanger)
@@ -32,6 +35,17 @@ def dummy_accept_callback(tx, destaddr, actual_amount, fee_est,
 
 def dummy_info_callback(msg):
     pass
+
+
+class TrialAsyncioTestCase(TrialTestCase, IsolatedAsyncioTestCase):
+
+    def __init__(self, methodName='runTest'):
+        IsolatedAsyncioTestCase.__init__(self, methodName)
+        TrialTestCase.__init__(self, methodName)
+
+    def __call__(self, *args, **kwds):
+        return IsolatedAsyncioTestCase.run(self, *args, **kwds)
+
 
 class DummyBlockchainInterface(BlockchainInterface):
 
@@ -174,16 +188,18 @@ class DummyBlockchainInterface(BlockchainInterface):
         return 30000
 
 
-def create_wallet_for_sync(wallet_structure, a, **kwargs):
+async def create_wallet_for_sync(wallet_structure, a, **kwargs):
     #We need a distinct seed for each run so as not to step over each other;
     #make it through a deterministic hash of all parameters including optionals.
     preimage = "".join([str(x) for x in a] + [str(y) for y in kwargs.values()]).encode("utf-8")
     print("using preimage: ", preimage)
     seedh = bintohex(btc.Hash(preimage))[:32]
-    return make_wallets(
-        1, [wallet_structure], fixed_seeds=[seedh], **kwargs)[0]['wallet']
+    wallets = await make_wallets(
+        1, [wallet_structure], fixed_seeds=[seedh], **kwargs)
+    return wallets [0]['wallet']
 
-def make_sign_and_push(ins_full,
+
+async def make_sign_and_push(ins_full,
                        wallet_service,
                        amount,
                        output_addr=None,
@@ -202,8 +218,10 @@ def make_sign_and_push(ins_full,
     total = sum(x['value'] for x in ins_full.values())
     ins = list(ins_full.keys())
     #random output address and change addr
-    output_addr = wallet_service.get_new_addr(1, BaseWallet.ADDRESS_TYPE_INTERNAL) if not output_addr else output_addr
-    change_addr = wallet_service.get_new_addr(0, BaseWallet.ADDRESS_TYPE_INTERNAL) if not change_addr else change_addr
+    output_addr = await wallet_service.get_new_addr(
+        1, BaseWallet.ADDRESS_TYPE_INTERNAL) if not output_addr else output_addr
+    change_addr = await wallet_service.get_new_addr(
+        0, BaseWallet.ADDRESS_TYPE_INTERNAL) if not change_addr else change_addr
     fee_est = estimate_tx_fee(len(ins), 2) if estimate_fee else 10000
     outs = [{'value': amount,
              'address': output_addr}, {'value': total - amount - fee_est,
@@ -214,7 +232,7 @@ def make_sign_and_push(ins_full,
     for i, j in enumerate(ins):
         scripts[i] = (ins_full[j]["script"], ins_full[j]["value"])
 
-    success, msg = wallet_service.sign_tx(tx, scripts, hashcode=hashcode)
+    success, msg = await wallet_service.sign_tx(tx, scripts, hashcode=hashcode)
     if not success:
         return False
     #pushtx returns False on any error
@@ -222,20 +240,21 @@ def make_sign_and_push(ins_full,
     if push_succeed:
         # in normal operation this happens automatically
         # but in some tests there is no monitoring loop:
-        wallet_service.process_new_tx(tx)
+        await wallet_service.process_new_tx(tx)
         return tx.GetTxid()[::-1]
     else:
         return False
 
-def make_wallets(n,
-                 wallet_structures=None,
-                 mean_amt=1,
-                 sdev_amt=0,
-                 start_index=0,
-                 fixed_seeds=None,
-                 wallet_cls=SegwitWallet,
-                 mixdepths=5,
-                 populate_internal=BaseWallet.ADDRESS_TYPE_EXTERNAL):
+
+async def make_wallets(n,
+                       wallet_structures=None,
+                       mean_amt=1,
+                       sdev_amt=0,
+                       start_index=0,
+                       fixed_seeds=None,
+                       wallet_cls=SegwitWallet,
+                       mixdepths=5,
+                       populate_internal=BaseWallet.ADDRESS_TYPE_EXTERNAL):
     '''n: number of wallets to be created
        wallet_structure: array of n arrays , each subarray
        specifying the number of addresses to be populated with coins
@@ -258,8 +277,8 @@ def make_wallets(n,
     for i in range(n):
         assert len(seeds[i]) == BIP32Wallet.ENTROPY_BYTES * 2
 
-        w = open_test_wallet_maybe(seeds[i], seeds[i], mixdepths - 1,
-                                   test_wallet_cls=wallet_cls)
+        w = await open_test_wallet_maybe(seeds[i], seeds[i], mixdepths - 1,
+                                         test_wallet_cls=wallet_cls)
         wallet_service = WalletService(w)
         wallets[i + start_index] = {'seed': seeds[i],
                                     'wallet': wallet_service}
@@ -270,8 +289,9 @@ def make_wallets(n,
                     amt = mean_amt - sdev_amt / 2.0 + deviation
                     if amt < 0: amt = 0.001
                     amt = float(Decimal(amt).quantize(Decimal(10)**-8))
-                    jm_single().bc_interface.grab_coins(wallet_service.get_new_addr(
-                        j, populate_internal), amt)
+                    addr = await wallet_service.get_new_addr(
+                        j, populate_internal)
+                    jm_single().bc_interface.grab_coins(addr, amt)
     return wallets
 
 

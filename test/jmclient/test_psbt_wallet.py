@@ -8,6 +8,13 @@
 
 import copy
 import base64
+from unittest import IsolatedAsyncioTestCase
+
+from unittest_parametrize import parametrize, ParametrizedTestCase
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from commontest import make_wallets, dummy_accept_callback, dummy_info_callback
 
 import jmbitcoin as bitcoin
@@ -22,384 +29,15 @@ pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
 
 log = get_log()
 
-def create_volatile_wallet(seedphrase, wallet_cls=SegwitWallet):
+async def create_volatile_wallet(seedphrase, wallet_cls=SegwitWallet):
     storage = VolatileStorage()
     wallet_cls.initialize(storage, get_network(), max_mixdepth=4,
                           entropy=wallet_cls.entropy_from_mnemonic(seedphrase))
     storage.save()
-    return wallet_cls(storage)
+    wallet = wallet_cls(storage)
+    await wallet.async_init(storage)
+    return wallet
 
-@pytest.mark.parametrize('walletseed, xpub, spktype_wallet, spktype_destn, partial, psbt', [
-    ("prosper diamond marriage spy across start shift elevator job lunar edge gallery",
-     "tpubDChjiEhsafnW2LcmK1C77XiEAgZddi6xZyxjMujBzUqZPTMRwsv3e5vSBYsdiPtCyc6TtoHTCjkxBjtF22tf8Z5ABRdeBUNwHCsqEyzR5wT",
-     "p2wpkh", "p2sh-p2wpkh", False,
-     "cHNidP8BAMQCAAAAA7uEliZeXLPfjeUiRBw6e5oZV1DtBrDmLthfDC4oaHQLAAAAAAD/////+X1Exketc4o5b9BPxsj70O+VlGvgiZz0KP1OMRtVLUQAAAAAAP////9r5ylMhQyxbJvCbU8aNE3NOPoXJwUaUZm4H3iT4RnaSwAAAAAA/////wKMz/AIAAAAABepFJwmRAefvZS7VQStD4k52Rn0k71Gh4zP8AgAAAAAFgAUA2shnTVftDXq+ssPwzml2UKdu1QAAAAAAAEBHwDh9QUAAAAAFgAUqw1Ifto4LztwcsxV6q+sQThIdloiBgMDZ5u3RN6Xum+OLkgAzwLFXGWFLwBUraMi7Oin4fYfrwzvYoLxAAAAAAAAAAAAAQEfAOH1BQAAAAAWABQpSCwoeMSghUoVflvtTPiqBPi+5yIGA/tAH4kVpqd3wzidaTNFxtwdpHTydkmB825us2w/3cAVDO9igvEAAAAAAQAAAAABAR8A4fUFAAAAABYAFEqM0KJ5FJ7ak2NL8PDqOPI0I1PaIgYD84aDwOqXKfGvEbre+bpNpuT0uZv6syESzz5PMu4RyLkM72KC8QAAAAACAAAAAAEAF6kUnCZEB5+9lLtVBK0PiTnZGfSTvUaHACICAw8k2gGGcF5sR8yKO5JeAkrkH15rmtCq8sCoDYbywTNzEO9igvEMAAAAIgAAAJQCAAAA"),
-    ("prosper diamond marriage spy across start shift elevator job lunar edge gallery",
-     "tpubDChjiEhsafnW2LcmK1C77XiEAgZddi6xZyxjMujBzUqZPTMRwsv3e5vSBYsdiPtCyc6TtoHTCjkxBjtF22tf8Z5ABRdeBUNwHCsqEyzR5wT",
-     "p2wpkh", "p2wpkh", False,
-     "cHNidP8BAMMCAAAAA7uEliZeXLPfjeUiRBw6e5oZV1DtBrDmLthfDC4oaHQLAAAAAAD/////+X1Exketc4o5b9BPxsj70O+VlGvgiZz0KP1OMRtVLUQAAAAAAP////9r5ylMhQyxbJvCbU8aNE3NOPoXJwUaUZm4H3iT4RnaSwAAAAAA/////wKMz/AIAAAAABYAFBaOTObQIdtCaryiPxaDV5rsGYWUjM/wCAAAAAAWABR9TJm5rcSoIMW7bE1bnj7REL/eygAAAAAAAQEfAOH1BQAAAAAWABSrDUh+2jgvO3ByzFXqr6xBOEh2WiIGAwNnm7dE3pe6b44uSADPAsVcZYUvAFStoyLs6Kfh9h+vDO9igvEAAAAAAAAAAAABAR8A4fUFAAAAABYAFClILCh4xKCFShV+W+1M+KoE+L7nIgYD+0AfiRWmp3fDOJ1pM0XG3B2kdPJ2SYHzbm6zbD/dwBUM72KC8QAAAAABAAAAAAEBHwDh9QUAAAAAFgAUSozQonkUntqTY0vw8Oo48jQjU9oiBgPzhoPA6pcp8a8Rut75uk2m5PS5m/qzIRLPPk8y7hHIuQzvYoLxAAAAAAIAAAAAACICAuqCicVUfcM5IiVSiB/0ZemodybG5Im9Fu8MLorQSE4UEO9igvEMAAAAIgAAAOkAAAAA"),
-    ("prosper diamond marriage spy across start shift elevator job lunar edge gallery",
-     "tpubDChjiEhsafnW2LcmK1C77XiEAgZddi6xZyxjMujBzUqZPTMRwsv3e5vSBYsdiPtCyc6TtoHTCjkxBjtF22tf8Z5ABRdeBUNwHCsqEyzR5wT",
-     "p2wpkh", "p2wpkh", True,
-     "cHNidP8BAMMCAAAAA7uEliZeXLPfjeUiRBw6e5oZV1DtBrDmLthfDC4oaHQLAAAAAAD/////+X1Exketc4o5b9BPxsj70O+VlGvgiZz0KP1OMRtVLUQAAAAAAP////9r5ylMhQyxbJvCbU8aNE3NOPoXJwUaUZm4H3iT4RnaSwAAAAAA/////wKMz/AIAAAAABYAFLH/IL11rTJ3wX1NcmUIsJ/T4j4jjM/wCAAAAAAWABR8GPNb1HUpCz8PKOc8aQXLD1wjcAAAAAAAAQEfAOH1BQAAAAAWABSrDUh+2jgvO3ByzFXqr6xBOEh2WiIGAwNnm7dE3pe6b44uSADPAsVcZYUvAFStoyLs6Kfh9h+vDE5vcGUAAAAAAAAAAAABAR8A4fUFAAAAABYAFClILCh4xKCFShV+W+1M+KoE+L7nIgYD+0AfiRWmp3fDOJ1pM0XG3B2kdPJ2SYHzbm6zbD/dwBUM72KC8QAAAAABAAAAAAEBHwDh9QUAAAAAFgAUSozQonkUntqTY0vw8Oo48jQjU9oiBgPzhoPA6pcp8a8Rut75uk2m5PS5m/qzIRLPPk8y7hHIuQzvYoLxAAAAAAIAAAAAACICAsQ7ZvU9tsbBoSje5rIJQBStlUkQaRCssKylEixre3AYEO9igvEMAAAAIgAAABcCAAAA"),
-])
-def test_sign_external_psbt(setup_psbt_wallet, walletseed, xpub,
-                            spktype_wallet, spktype_destn, partial, psbt):
-    bitcoin.select_chain_params("bitcoin")
-    wallet_cls = SegwitWallet if spktype_wallet == "p2wpkh" else SegwitLegacyWallet
-    wallet = create_volatile_wallet(walletseed, wallet_cls=wallet_cls)
-    # if we want to actually sign, our wallet has to recognize the fake utxos
-    # as being in the wallet, so we inject them:
-    class DummyUtxoManager(object):
-        _utxo = {0:{}}
-        def add_utxo(self, utxo, path, value, height):
-            self._utxo[0][utxo] = (path, value, height)
-    wallet._index_cache[0][0] = 1000
-    wallet._utxos = DummyUtxoManager()
-    p0, p1, p2 = (wallet.get_path(0, 0, i) for i in range(3))
-    if not partial:
-        wallet._utxos.add_utxo(utxostr_to_utxo(
-            "0b7468282e0c5fd82ee6b006ed5057199a7b3a1c4422e58ddfb35c5e269684bb:0"),
-                               p0, 10000, 1)
-    wallet._utxos.add_utxo(utxostr_to_utxo(
-        "442d551b314efd28f49c89e06b9495efd0fbc8c64fd06f398a73ad47c6447df9:0"),
-                           p1, 10000, 1)
-    wallet._utxos.add_utxo(utxostr_to_utxo(
-        "4bda19e193781fb899511a052717fa38cd4d341a4f6dc29b6cb10c854c29e76b:0"),
-                           p2, 10000, 1)
-    signresult_and_signedpsbt, err = wallet.sign_psbt(base64.b64decode(
-        psbt.encode("ascii")),with_sign_result=True)
-    assert not err
-    signresult, signedpsbt = signresult_and_signedpsbt
-    if partial:
-        assert not signresult.is_final
-        assert signresult.num_inputs_signed == 2
-        assert signresult.num_inputs_final == 2
-    else:
-        assert signresult.is_final
-        assert signresult.num_inputs_signed == 3
-        assert signresult.num_inputs_final == 3
-    print(PSBTWalletMixin.human_readable_psbt(signedpsbt))
-    bitcoin.select_chain_params("bitcoin/regtest")
-
-def test_create_and_sign_psbt_with_legacy(setup_psbt_wallet):
-    """ The purpose of this test is to check that we can create and
-    then partially sign a PSBT where we own one input and the other input
-    is of legacy p2pkh type.
-    """
-    wallet_service = make_wallets(1, [[1,0,0,0,0]], 1)[0]['wallet']
-    wallet_service.sync_wallet(fast=True)
-    utxos = wallet_service.select_utxos(0, bitcoin.coins_to_satoshi(0.5))
-    assert len(utxos) == 1
-    # create a legacy address and make a payment into it
-    legacy_addr = bitcoin.CCoinAddress.from_scriptPubKey(
-        bitcoin.pubkey_to_p2pkh_script(
-            bitcoin.privkey_to_pubkey(b"\x01"*33)))
-    tx = direct_send(wallet_service, 0,
-                     [(str(legacy_addr), bitcoin.coins_to_satoshi(0.3))],
-                     accept_callback=dummy_accept_callback,
-                     info_callback=dummy_info_callback,
-                     return_transaction=True)
-    assert tx
-    # this time we will have one utxo worth <~ 0.7
-    my_utxos = wallet_service.select_utxos(0, bitcoin.coins_to_satoshi(0.5))
-    assert len(my_utxos) == 1
-    # find the outpoint for the legacy address we're spending
-    n = -1
-    for i, t in enumerate(tx.vout):
-        if bitcoin.CCoinAddress.from_scriptPubKey(t.scriptPubKey) == legacy_addr:
-            n = i
-    assert n > -1
-    utxos = copy.deepcopy(my_utxos)
-    utxos[(tx.GetTxid()[::-1], n)] ={"script": legacy_addr.to_scriptPubKey(),
-              "value": bitcoin.coins_to_satoshi(0.3)}
-    outs = [{"value": bitcoin.coins_to_satoshi(0.998),
-                 "address": wallet_service.get_addr(0,0,0)}]
-    tx2 = bitcoin.mktx(list(utxos.keys()), outs)
-    spent_outs = wallet_service.witness_utxos_to_psbt_utxos(my_utxos)
-    spent_outs.append(tx)
-    new_psbt = wallet_service.create_psbt_from_tx(tx2, spent_outs,
-                                                  force_witness_utxo=False)
-    signed_psbt_and_signresult, err = wallet_service.sign_psbt(
-        new_psbt.serialize(), with_sign_result=True)
-    assert err is None
-    signresult, signed_psbt = signed_psbt_and_signresult
-    assert signresult.num_inputs_signed == 1
-    assert signresult.num_inputs_final == 1
-    assert not signresult.is_final
-
-@pytest.mark.parametrize('unowned_utxo, wallet_cls', [
-    (True, SegwitLegacyWallet),
-    (False, SegwitLegacyWallet),
-    (True, SegwitWallet),
-    (False, SegwitWallet),
-    (True, LegacyWallet),
-    (False, LegacyWallet),
-])
-def test_create_psbt_and_sign(setup_psbt_wallet, unowned_utxo, wallet_cls):
-    """ Plan of test:
-    1. Create a wallet and source 3 destination addresses.
-    2. Make, and confirm, transactions that fund the 3 addrs.
-    3. Create a new tx spending 2 of those 3 utxos and spending
-       another utxo we don't own (extra is optional per `unowned_utxo`).
-    4. Create a psbt using the above transaction and corresponding
-       `spent_outs` field to fill in the redeem script.
-    5. Compare resulting PSBT with expected structure.
-    6. Use the wallet's sign_psbt method to sign the whole psbt, which
-       means signing each input we own.
-    7. Check that each input is finalized as per expected. Check that the whole
-       PSBT is or is not finalized as per whether there is an unowned utxo.
-    8. In case where whole psbt is finalized, attempt to broadcast the tx.
-    """
-    # steps 1 and 2:
-    wallet_service = make_wallets(1, [[3,0,0,0,0]], 1,
-                                  wallet_cls=wallet_cls)[0]['wallet']
-    wallet_service.sync_wallet(fast=True)
-    utxos = wallet_service.select_utxos(0, bitcoin.coins_to_satoshi(1.5))
-    # for legacy wallets, psbt creation requires querying for the spending
-    # transaction:
-    if wallet_cls == LegacyWallet:
-        fulltxs = []
-        for utxo, v in utxos.items():
-            fulltxs.append(jm_single().bc_interface.get_deser_from_gettransaction(
-                jm_single().bc_interface.get_transaction(utxo[0])))
-
-    assert len(utxos) == 2
-    u_utxos = {}
-    if unowned_utxo:
-        # note: tx creation uses the key only; psbt creation uses the value,
-        # which can be fake here; we do not intend to attempt to fully
-        # finalize a psbt with an unowned input. See
-        # https://github.com/Simplexum/python-bitcointx/issues/30
-        # the redeem script creation (which is artificial) will be
-        # avoided in future.
-        priv = b"\xaa"*32 + b"\x01"
-        pub = bitcoin.privkey_to_pubkey(priv)
-        script = bitcoin.pubkey_to_p2sh_p2wpkh_script(pub)
-        redeem_script = bitcoin.pubkey_to_p2wpkh_script(pub)
-        u_utxos[(b"\xaa"*32, 12)] = {"value": 1000, "script": script}
-    utxos.update(u_utxos)
-    # outputs aren't interesting for this test (we selected 1.5 but will get 2):
-    outs = [{"value": bitcoin.coins_to_satoshi(1.999),
-             "address": wallet_service.get_addr(0,0,0)}]
-    tx = bitcoin.mktx(list(utxos.keys()), outs)
-
-    if wallet_cls != LegacyWallet:
-        spent_outs = wallet_service.witness_utxos_to_psbt_utxos(utxos)
-        force_witness_utxo=True
-    else:
-        spent_outs = fulltxs
-        # the extra input is segwit:
-        if unowned_utxo:
-            spent_outs.extend(
-                wallet_service.witness_utxos_to_psbt_utxos(u_utxos))
-        force_witness_utxo=False
-    newpsbt = wallet_service.create_psbt_from_tx(tx, spent_outs,
-                            force_witness_utxo=force_witness_utxo)
-    # see note above
-    if unowned_utxo:
-        newpsbt.inputs[-1].redeem_script = redeem_script
-    print(bintohex(newpsbt.serialize()))
-    print("human readable: ")
-    print(wallet_service.human_readable_psbt(newpsbt))
-    # we cannot compare with a fixed expected result due to wallet randomization, but we can
-    # check psbt structure:
-    expected_inputs_length = 3 if unowned_utxo else 2
-    assert len(newpsbt.inputs) == expected_inputs_length
-    assert len(newpsbt.outputs) == 1
-    # note: redeem_script field is a CScript which is a bytes instance,
-    # so checking length is best way to check for existence (comparison
-    # with None does not work):
-    if wallet_cls == SegwitLegacyWallet:
-        assert len(newpsbt.inputs[0].redeem_script) != 0
-        assert len(newpsbt.inputs[1].redeem_script) != 0
-    if unowned_utxo:
-        assert newpsbt.inputs[2].redeem_script == redeem_script
-
-    signed_psbt_and_signresult, err = wallet_service.sign_psbt(
-        newpsbt.serialize(), with_sign_result=True)
-    assert err is None
-    signresult, signed_psbt = signed_psbt_and_signresult
-    expected_signed_inputs = len(utxos) if not unowned_utxo else len(utxos)-1
-    assert signresult.num_inputs_signed == expected_signed_inputs
-    assert signresult.num_inputs_final == expected_signed_inputs
-
-    if not unowned_utxo:
-        assert signresult.is_final
-        # only in case all signed do we try to broadcast:
-        extracted_tx = signed_psbt.extract_transaction().serialize()
-        assert jm_single().bc_interface.pushtx(extracted_tx)
-    else:
-        # transaction extraction must fail for not-fully-signed psbts:
-        with pytest.raises(ValueError) as e:
-            extracted_tx = signed_psbt.extract_transaction()
-
-@pytest.mark.parametrize('payment_amt, wallet_cls_sender, wallet_cls_receiver', [
-    (0.05, SegwitLegacyWallet, SegwitLegacyWallet),
-    #(0.95, SegwitLegacyWallet, SegwitWallet),
-    #(0.05, SegwitWallet, SegwitLegacyWallet),
-    #(0.95, SegwitWallet, SegwitWallet),
-])
-def test_payjoin_workflow(setup_psbt_wallet, payment_amt, wallet_cls_sender,
-                          wallet_cls_receiver):
-    """ Workflow step 1:
-    Create a payment from a wallet, and create a finalized PSBT.
-    This step is fairly trivial as the functionality is built-in to
-    PSBTWalletMixin.
-    Note that only Segwit* wallets are supported for PayJoin.
-
-        Workflow step 2:
-    Receiver creates a new partially signed PSBT with the same amount
-    and at least one more utxo.
-
-        Workflow step 3:
-    Given a partially signed PSBT created by a receiver, here the sender
-    completes (co-signs) the PSBT they are given. Note this code is a PSBT
-    functionality check, and does NOT include the detailed checks that
-    the sender should perform before agreeing to sign (see:
-    https://github.com/btcpayserver/btcpayserver-doc/blob/eaac676866a4d871eda5fd7752b91b88fdf849ff/Payjoin-spec.md#receiver-side
-    ).
-    """
-
-    wallet_r = make_wallets(1, [[3,0,0,0,0]], 1,
-                    wallet_cls=wallet_cls_receiver)[0]["wallet"]
-    wallet_s = make_wallets(1, [[3,0,0,0,0]], 1,
-                        wallet_cls=wallet_cls_sender)[0]["wallet"]
-    for w in [wallet_r, wallet_s]:
-        w.sync_wallet(fast=True)
-
-    # destination address for payment:
-    destaddr = str(bitcoin.CCoinAddress.from_scriptPubKey(
-        bitcoin.pubkey_to_p2wpkh_script(bitcoin.privkey_to_pubkey(b"\x01"*33))))
-
-    payment_amt = bitcoin.coins_to_satoshi(payment_amt)
-
-    # *** STEP 1 ***
-    # **************
-
-    # create a normal tx from the sender wallet:
-    payment_psbt = direct_send(wallet_s, 0,
-                    [(destaddr, payment_amt)],
-                    accept_callback=dummy_accept_callback,
-                    info_callback=dummy_info_callback,
-                    with_final_psbt=True)
-
-    print("Initial payment PSBT created:\n{}".format(
-        wallet_s.human_readable_psbt(payment_psbt)))
-    # ensure that the payemnt amount is what was intended:
-    out_amts = [x.nValue for x in payment_psbt.unsigned_tx.vout]
-    # NOTE this would have to change for more than 2 outputs:
-    assert any([out_amts[i] == payment_amt for i in [0, 1]])
-
-    # ensure that we can actually broadcast the created tx:
-    # (note that 'extract_transaction' represents an implicit
-    # PSBT finality check).
-    extracted_tx = payment_psbt.extract_transaction().serialize()
-    # don't want to push the tx right now, because of test structure
-    # (in production code this isn't really needed, we will not
-    # produce invalid payment transactions).
-    assert jm_single().bc_interface.testmempoolaccept(bintohex(extracted_tx)),\
-        "Payment transaction was rejected from mempool."
-
-    # *** STEP 2 ***
-    # **************
-
-    # Simple receiver utxo choice heuristic.
-    # For more generality we test with two receiver-utxos, not one.
-    all_receiver_utxos = wallet_r.get_all_utxos()
-    # TODO is there a less verbose way to get any 2 utxos from the dict?
-    receiver_utxos_keys = list(all_receiver_utxos.keys())[:2]
-    receiver_utxos = {k: v for k, v in all_receiver_utxos.items(
-        ) if k in receiver_utxos_keys}
-
-    # receiver will do other checks as discussed above, including payment
-    # amount; as discussed above, this is out of the scope of this PSBT test.
-
-    # construct unsigned tx for payjoin-psbt:
-    payjoin_tx_inputs = [(x.prevout.hash[::-1],
-                x.prevout.n) for x in payment_psbt.unsigned_tx.vin]
-    payjoin_tx_inputs.extend(receiver_utxos.keys())
-    # find payment output and change output
-    pay_out = None
-    change_out = None
-    for o in payment_psbt.unsigned_tx.vout:
-        jm_out_fmt = {"value": o.nValue,
-        "address": str(bitcoin.CCoinAddress.from_scriptPubKey(
-        o.scriptPubKey))}
-        if o.nValue == payment_amt:
-            assert pay_out is None
-            pay_out = jm_out_fmt
-        else:
-            assert change_out is None
-            change_out = jm_out_fmt
-
-    # we now know there were two outputs and know which is payment.
-    # bump payment output with our input:
-    outs = [pay_out, change_out]
-    our_inputs_val = sum([v["value"] for _, v in receiver_utxos.items()])
-    pay_out["value"] += our_inputs_val
-    print("we bumped the payment output value by: ", our_inputs_val)
-    print("It is now: ", pay_out["value"])
-    unsigned_payjoin_tx = bitcoin.make_shuffled_tx(payjoin_tx_inputs, outs,
-                                version=payment_psbt.unsigned_tx.nVersion,
-                                locktime=payment_psbt.unsigned_tx.nLockTime)
-    print("we created this unsigned tx: ")
-    print(bitcoin.human_readable_transaction(unsigned_payjoin_tx))
-    # to create the PSBT we need the spent_outs for each input,
-    # in the right order:
-    spent_outs = []
-    for i, inp in enumerate(unsigned_payjoin_tx.vin):
-        input_found = False
-        for j, inp2 in enumerate(payment_psbt.unsigned_tx.vin):
-            if inp.prevout == inp2.prevout:
-                spent_outs.append(payment_psbt.inputs[j].utxo)
-                input_found = True
-                break
-        if input_found:
-            continue
-        # if we got here this input is ours, we must find
-        # it from our original utxo choice list:
-        for ru in receiver_utxos.keys():
-            if (inp.prevout.hash[::-1], inp.prevout.n) == ru:
-                spent_outs.append(
-                    wallet_r.witness_utxos_to_psbt_utxos(
-                        {ru: receiver_utxos[ru]})[0])
-                input_found = True
-                break
-        # there should be no other inputs:
-        assert input_found
-
-    r_payjoin_psbt = wallet_r.create_psbt_from_tx(unsigned_payjoin_tx,
-                                                  spent_outs=spent_outs)
-    print("Receiver created payjoin PSBT:\n{}".format(
-        wallet_r.human_readable_psbt(r_payjoin_psbt)))
-
-    signresultandpsbt, err = wallet_r.sign_psbt(r_payjoin_psbt.serialize(),
-                                                with_sign_result=True)
-    assert not err, err
-    signresult, receiver_signed_psbt = signresultandpsbt
-    assert signresult.num_inputs_final == len(receiver_utxos)
-    assert not signresult.is_final
-
-    print("Receiver signing successful. Payjoin PSBT is now:\n{}".format(
-        wallet_r.human_readable_psbt(receiver_signed_psbt)))
-
-    # *** STEP 3 ***
-    # **************
-
-    # take the half-signed PSBT, validate and co-sign:
-
-    signresultandpsbt, err = wallet_s.sign_psbt(
-        receiver_signed_psbt.serialize(), with_sign_result=True)
-    assert not err, err
-    signresult, sender_signed_psbt =  signresultandpsbt
-    print("Sender's final signed PSBT is:\n{}".format(
-        wallet_s.human_readable_psbt(sender_signed_psbt)))
-    assert signresult.is_final
-
-    # broadcast the tx
-    extracted_tx = sender_signed_psbt.extract_transaction().serialize()
-    assert jm_single().bc_interface.pushtx(extracted_tx)
 
 """ test vector data for human readable parsing only,
 they are taken from bitcointx/tests/test_psbt.py and in turn
@@ -430,12 +68,403 @@ hr_test_vectors = {
 "proprietary-values": '70736274ff0100550200000001ab0949a08c5af7c49b8212f417e2f15ab3f5c33dcf153821a8139f877a5b7be40100000000feffffff018e240000000000001976a9146f4620b553fa095e721b9ee0efe9fa039cca459788ac0000000015fc0a676c6f62616c5f706678016d756c7469706c790563686965660001012000e1f5050000000017a9143545e6e33b832c47050f24d3eeb93c9c03948bc787010416001485d13537f2e265405a34dbafa9e3dda01fb823080ffc06696e5f706678fde80377686174056672616d650afc00fe40420f0061736b077361746f7368690012fc076f75745f706678feffffff01636f726e05746967657217fc076f75745f706678ffffffffffffffffff707570707905647269766500'
 }
 
-def test_hr_psbt(setup_psbt_wallet):
-    bitcoin.select_chain_params("bitcoin")
-    for k, v in hr_test_vectors.items():
-        print(PSBTWalletMixin.human_readable_psbt(
-            bitcoin.PartiallySignedTransaction.from_binary(hextobin(v))))
-    bitcoin.select_chain_params("bitcoin/regtest")
+@pytest.mark.usefixtures("setup_psbt_wallet")
+class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
+
+    @parametrize(
+        'walletseed, xpub, spktype_wallet, spktype_destn, partial, psbt',
+        [
+            ("prosper diamond marriage spy across start shift elevator job lunar edge gallery",
+             "tpubDChjiEhsafnW2LcmK1C77XiEAgZddi6xZyxjMujBzUqZPTMRwsv3e5vSBYsdiPtCyc6TtoHTCjkxBjtF22tf8Z5ABRdeBUNwHCsqEyzR5wT",
+             "p2wpkh", "p2sh-p2wpkh", False,
+             "cHNidP8BAMQCAAAAA7uEliZeXLPfjeUiRBw6e5oZV1DtBrDmLthfDC4oaHQLAAAAAAD/////+X1Exketc4o5b9BPxsj70O+VlGvgiZz0KP1OMRtVLUQAAAAAAP////9r5ylMhQyxbJvCbU8aNE3NOPoXJwUaUZm4H3iT4RnaSwAAAAAA/////wKMz/AIAAAAABepFJwmRAefvZS7VQStD4k52Rn0k71Gh4zP8AgAAAAAFgAUA2shnTVftDXq+ssPwzml2UKdu1QAAAAAAAEBHwDh9QUAAAAAFgAUqw1Ifto4LztwcsxV6q+sQThIdloiBgMDZ5u3RN6Xum+OLkgAzwLFXGWFLwBUraMi7Oin4fYfrwzvYoLxAAAAAAAAAAAAAQEfAOH1BQAAAAAWABQpSCwoeMSghUoVflvtTPiqBPi+5yIGA/tAH4kVpqd3wzidaTNFxtwdpHTydkmB825us2w/3cAVDO9igvEAAAAAAQAAAAABAR8A4fUFAAAAABYAFEqM0KJ5FJ7ak2NL8PDqOPI0I1PaIgYD84aDwOqXKfGvEbre+bpNpuT0uZv6syESzz5PMu4RyLkM72KC8QAAAAACAAAAAAEAF6kUnCZEB5+9lLtVBK0PiTnZGfSTvUaHACICAw8k2gGGcF5sR8yKO5JeAkrkH15rmtCq8sCoDYbywTNzEO9igvEMAAAAIgAAAJQCAAAA"),
+            ("prosper diamond marriage spy across start shift elevator job lunar edge gallery",
+             "tpubDChjiEhsafnW2LcmK1C77XiEAgZddi6xZyxjMujBzUqZPTMRwsv3e5vSBYsdiPtCyc6TtoHTCjkxBjtF22tf8Z5ABRdeBUNwHCsqEyzR5wT",
+             "p2wpkh", "p2wpkh", False,
+             "cHNidP8BAMMCAAAAA7uEliZeXLPfjeUiRBw6e5oZV1DtBrDmLthfDC4oaHQLAAAAAAD/////+X1Exketc4o5b9BPxsj70O+VlGvgiZz0KP1OMRtVLUQAAAAAAP////9r5ylMhQyxbJvCbU8aNE3NOPoXJwUaUZm4H3iT4RnaSwAAAAAA/////wKMz/AIAAAAABYAFBaOTObQIdtCaryiPxaDV5rsGYWUjM/wCAAAAAAWABR9TJm5rcSoIMW7bE1bnj7REL/eygAAAAAAAQEfAOH1BQAAAAAWABSrDUh+2jgvO3ByzFXqr6xBOEh2WiIGAwNnm7dE3pe6b44uSADPAsVcZYUvAFStoyLs6Kfh9h+vDO9igvEAAAAAAAAAAAABAR8A4fUFAAAAABYAFClILCh4xKCFShV+W+1M+KoE+L7nIgYD+0AfiRWmp3fDOJ1pM0XG3B2kdPJ2SYHzbm6zbD/dwBUM72KC8QAAAAABAAAAAAEBHwDh9QUAAAAAFgAUSozQonkUntqTY0vw8Oo48jQjU9oiBgPzhoPA6pcp8a8Rut75uk2m5PS5m/qzIRLPPk8y7hHIuQzvYoLxAAAAAAIAAAAAACICAuqCicVUfcM5IiVSiB/0ZemodybG5Im9Fu8MLorQSE4UEO9igvEMAAAAIgAAAOkAAAAA"),
+            ("prosper diamond marriage spy across start shift elevator job lunar edge gallery",
+             "tpubDChjiEhsafnW2LcmK1C77XiEAgZddi6xZyxjMujBzUqZPTMRwsv3e5vSBYsdiPtCyc6TtoHTCjkxBjtF22tf8Z5ABRdeBUNwHCsqEyzR5wT",
+             "p2wpkh", "p2wpkh", True,
+             "cHNidP8BAMMCAAAAA7uEliZeXLPfjeUiRBw6e5oZV1DtBrDmLthfDC4oaHQLAAAAAAD/////+X1Exketc4o5b9BPxsj70O+VlGvgiZz0KP1OMRtVLUQAAAAAAP////9r5ylMhQyxbJvCbU8aNE3NOPoXJwUaUZm4H3iT4RnaSwAAAAAA/////wKMz/AIAAAAABYAFLH/IL11rTJ3wX1NcmUIsJ/T4j4jjM/wCAAAAAAWABR8GPNb1HUpCz8PKOc8aQXLD1wjcAAAAAAAAQEfAOH1BQAAAAAWABSrDUh+2jgvO3ByzFXqr6xBOEh2WiIGAwNnm7dE3pe6b44uSADPAsVcZYUvAFStoyLs6Kfh9h+vDE5vcGUAAAAAAAAAAAABAR8A4fUFAAAAABYAFClILCh4xKCFShV+W+1M+KoE+L7nIgYD+0AfiRWmp3fDOJ1pM0XG3B2kdPJ2SYHzbm6zbD/dwBUM72KC8QAAAAABAAAAAAEBHwDh9QUAAAAAFgAUSozQonkUntqTY0vw8Oo48jQjU9oiBgPzhoPA6pcp8a8Rut75uk2m5PS5m/qzIRLPPk8y7hHIuQzvYoLxAAAAAAIAAAAAACICAsQ7ZvU9tsbBoSje5rIJQBStlUkQaRCssKylEixre3AYEO9igvEMAAAAIgAAABcCAAAA"),
+        ])
+    async def test_sign_external_psbt(self, walletseed, xpub, spktype_wallet,
+                                      spktype_destn, partial, psbt):
+        bitcoin.select_chain_params("bitcoin")
+        wallet_cls = SegwitWallet if spktype_wallet == "p2wpkh" else SegwitLegacyWallet
+        wallet = await create_volatile_wallet(
+            walletseed, wallet_cls=wallet_cls)
+        # if we want to actually sign, our wallet has to recognize the fake utxos
+        # as being in the wallet, so we inject them:
+        class DummyUtxoManager(object):
+            _utxo = {0:{}}
+            def add_utxo(self, utxo, path, value, height):
+                self._utxo[0][utxo] = (path, value, height)
+        wallet._index_cache[0][0] = 1000
+        wallet._utxos = DummyUtxoManager()
+        p0, p1, p2 = (wallet.get_path(0, 0, i) for i in range(3))
+        if not partial:
+            wallet._utxos.add_utxo(utxostr_to_utxo(
+                "0b7468282e0c5fd82ee6b006ed5057199a7b3a1c4422e58ddfb35c5e269684bb:0"),
+                                   p0, 10000, 1)
+        wallet._utxos.add_utxo(utxostr_to_utxo(
+            "442d551b314efd28f49c89e06b9495efd0fbc8c64fd06f398a73ad47c6447df9:0"),
+                               p1, 10000, 1)
+        wallet._utxos.add_utxo(utxostr_to_utxo(
+            "4bda19e193781fb899511a052717fa38cd4d341a4f6dc29b6cb10c854c29e76b:0"),
+                               p2, 10000, 1)
+        signresult_and_signedpsbt, err = await wallet.sign_psbt(
+            base64.b64decode(psbt.encode("ascii")), with_sign_result=True)
+        assert not err
+        signresult, signedpsbt = signresult_and_signedpsbt
+        if partial:
+            assert not signresult.is_final
+            assert signresult.num_inputs_signed == 2
+            assert signresult.num_inputs_final == 2
+        else:
+            assert signresult.is_final
+            assert signresult.num_inputs_signed == 3
+            assert signresult.num_inputs_final == 3
+        print(PSBTWalletMixin.human_readable_psbt(signedpsbt))
+        bitcoin.select_chain_params("bitcoin/regtest")
+
+    async def test_create_and_sign_psbt_with_legacy(self):
+        """ The purpose of this test is to check that we can create and
+        then partially sign a PSBT where we own one input and the other input
+        is of legacy p2pkh type.
+        """
+        wallets = await make_wallets(1, [[1,0,0,0,0]], 1)
+        wallet_service = wallets[0]['wallet']
+        await wallet_service.sync_wallet(fast=True)
+        utxos = await wallet_service.select_utxos(
+            0, bitcoin.coins_to_satoshi(0.5))
+        assert len(utxos) == 1
+        # create a legacy address and make a payment into it
+        legacy_addr = bitcoin.CCoinAddress.from_scriptPubKey(
+            bitcoin.pubkey_to_p2pkh_script(
+                bitcoin.privkey_to_pubkey(b"\x01"*33)))
+        tx = await direct_send(
+            wallet_service, 0,
+            [(str(legacy_addr), bitcoin.coins_to_satoshi(0.3))],
+            accept_callback=dummy_accept_callback,
+            info_callback=dummy_info_callback,
+            return_transaction=True)
+        assert tx
+        # this time we will have one utxo worth <~ 0.7
+        my_utxos = await wallet_service.select_utxos(
+            0, bitcoin.coins_to_satoshi(0.5))
+        assert len(my_utxos) == 1
+        # find the outpoint for the legacy address we're spending
+        n = -1
+        for i, t in enumerate(tx.vout):
+            if bitcoin.CCoinAddress.from_scriptPubKey(t.scriptPubKey) == legacy_addr:
+                n = i
+        assert n > -1
+        utxos = copy.deepcopy(my_utxos)
+        utxos[(tx.GetTxid()[::-1], n)] ={"script": legacy_addr.to_scriptPubKey(),
+                  "value": bitcoin.coins_to_satoshi(0.3)}
+        outs = [{"value": bitcoin.coins_to_satoshi(0.998),
+                     "address": await wallet_service.get_addr(0,0,0)}]
+        tx2 = bitcoin.mktx(list(utxos.keys()), outs)
+        spent_outs = wallet_service.witness_utxos_to_psbt_utxos(my_utxos)
+        spent_outs.append(tx)
+        new_psbt = await wallet_service.create_psbt_from_tx(
+            tx2, spent_outs, force_witness_utxo=False)
+        signed_psbt_and_signresult, err = await wallet_service.sign_psbt(
+            new_psbt.serialize(), with_sign_result=True)
+        assert err is None
+        signresult, signed_psbt = signed_psbt_and_signresult
+        assert signresult.num_inputs_signed == 1
+        assert signresult.num_inputs_final == 1
+        assert not signresult.is_final
+
+    @parametrize(
+        'unowned_utxo, wallet_cls',
+        [
+            (True, SegwitLegacyWallet),
+            (False, SegwitLegacyWallet),
+            (True, SegwitWallet),
+            (False, SegwitWallet),
+            (True, LegacyWallet),
+            (False, LegacyWallet),
+        ])
+    async def test_create_psbt_and_sign(self, unowned_utxo, wallet_cls):
+        """ Plan of test:
+        1. Create a wallet and source 3 destination addresses.
+        2. Make, and confirm, transactions that fund the 3 addrs.
+        3. Create a new tx spending 2 of those 3 utxos and spending
+           another utxo we don't own (extra is optional per `unowned_utxo`).
+        4. Create a psbt using the above transaction and corresponding
+           `spent_outs` field to fill in the redeem script.
+        5. Compare resulting PSBT with expected structure.
+        6. Use the wallet's sign_psbt method to sign the whole psbt, which
+           means signing each input we own.
+        7. Check that each input is finalized as per expected. Check that the whole
+           PSBT is or is not finalized as per whether there is an unowned utxo.
+        8. In case where whole psbt is finalized, attempt to broadcast the tx.
+        """
+        # steps 1 and 2:
+        wallets = await make_wallets(
+            1, [[3,0,0,0,0]], 1, wallet_cls=wallet_cls)
+        wallet_service = wallets[0]['wallet']
+        await wallet_service.sync_wallet(fast=True)
+        utxos = await wallet_service.select_utxos(
+            0, bitcoin.coins_to_satoshi(1.5))
+        # for legacy wallets, psbt creation requires querying for the spending
+        # transaction:
+        if wallet_cls == LegacyWallet:
+            fulltxs = []
+            for utxo, v in utxos.items():
+                fulltxs.append(jm_single().bc_interface.get_deser_from_gettransaction(
+                    jm_single().bc_interface.get_transaction(utxo[0])))
+
+        assert len(utxos) == 2
+        u_utxos = {}
+        if unowned_utxo:
+            # note: tx creation uses the key only; psbt creation uses the value,
+            # which can be fake here; we do not intend to attempt to fully
+            # finalize a psbt with an unowned input. See
+            # https://github.com/Simplexum/python-bitcointx/issues/30
+            # the redeem script creation (which is artificial) will be
+            # avoided in future.
+            priv = b"\xaa"*32 + b"\x01"
+            pub = bitcoin.privkey_to_pubkey(priv)
+            script = bitcoin.pubkey_to_p2sh_p2wpkh_script(pub)
+            redeem_script = bitcoin.pubkey_to_p2wpkh_script(pub)
+            u_utxos[(b"\xaa"*32, 12)] = {"value": 1000, "script": script}
+        utxos.update(u_utxos)
+        # outputs aren't interesting for this test (we selected 1.5 but will get 2):
+        outs = [{"value": bitcoin.coins_to_satoshi(1.999),
+                 "address": await wallet_service.get_addr(0,0,0)}]
+        tx = bitcoin.mktx(list(utxos.keys()), outs)
+
+        if wallet_cls != LegacyWallet:
+            spent_outs = wallet_service.witness_utxos_to_psbt_utxos(utxos)
+            force_witness_utxo=True
+        else:
+            spent_outs = fulltxs
+            # the extra input is segwit:
+            if unowned_utxo:
+                spent_outs.extend(
+                    wallet_service.witness_utxos_to_psbt_utxos(u_utxos))
+            force_witness_utxo=False
+        newpsbt = await wallet_service.create_psbt_from_tx(
+            tx, spent_outs, force_witness_utxo=force_witness_utxo)
+        # see note above
+        if unowned_utxo:
+            newpsbt.inputs[-1].redeem_script = redeem_script
+        print(bintohex(newpsbt.serialize()))
+        print("human readable: ")
+        print(wallet_service.human_readable_psbt(newpsbt))
+        # we cannot compare with a fixed expected result due to wallet randomization, but we can
+        # check psbt structure:
+        expected_inputs_length = 3 if unowned_utxo else 2
+        assert len(newpsbt.inputs) == expected_inputs_length
+        assert len(newpsbt.outputs) == 1
+        # note: redeem_script field is a CScript which is a bytes instance,
+        # so checking length is best way to check for existence (comparison
+        # with None does not work):
+        if wallet_cls == SegwitLegacyWallet:
+            assert len(newpsbt.inputs[0].redeem_script) != 0
+            assert len(newpsbt.inputs[1].redeem_script) != 0
+        if unowned_utxo:
+            assert newpsbt.inputs[2].redeem_script == redeem_script
+
+        signed_psbt_and_signresult, err = await wallet_service.sign_psbt(
+            newpsbt.serialize(), with_sign_result=True)
+        assert err is None
+        signresult, signed_psbt = signed_psbt_and_signresult
+        expected_signed_inputs = len(utxos) if not unowned_utxo else len(utxos)-1
+        assert signresult.num_inputs_signed == expected_signed_inputs
+        assert signresult.num_inputs_final == expected_signed_inputs
+
+        if not unowned_utxo:
+            assert signresult.is_final
+            # only in case all signed do we try to broadcast:
+            extracted_tx = signed_psbt.extract_transaction().serialize()
+            assert jm_single().bc_interface.pushtx(extracted_tx)
+        else:
+            # transaction extraction must fail for not-fully-signed psbts:
+            with pytest.raises(ValueError) as e:
+                extracted_tx = signed_psbt.extract_transaction()
+
+    @parametrize(
+        'payment_amt, wallet_cls_sender, wallet_cls_receiver',
+        [
+            (0.05, SegwitLegacyWallet, SegwitLegacyWallet),
+            #(0.95, SegwitLegacyWallet, SegwitWallet),
+            #(0.05, SegwitWallet, SegwitLegacyWallet),
+            #(0.95, SegwitWallet, SegwitWallet),
+        ])
+    async def test_payjoin_workflow(self, payment_amt, wallet_cls_sender,
+                                    wallet_cls_receiver):
+        """ Workflow step 1:
+        Create a payment from a wallet, and create a finalized PSBT.
+        This step is fairly trivial as the functionality is built-in to
+        PSBTWalletMixin.
+        Note that only Segwit* wallets are supported for PayJoin.
+
+            Workflow step 2:
+        Receiver creates a new partially signed PSBT with the same amount
+        and at least one more utxo.
+
+            Workflow step 3:
+        Given a partially signed PSBT created by a receiver, here the sender
+        completes (co-signs) the PSBT they are given. Note this code is a PSBT
+        functionality check, and does NOT include the detailed checks that
+        the sender should perform before agreeing to sign (see:
+        https://github.com/btcpayserver/btcpayserver-doc/blob/eaac676866a4d871eda5fd7752b91b88fdf849ff/Payjoin-spec.md#receiver-side
+        ).
+        """
+
+        wallets = await make_wallets(
+            1, [[3,0,0,0,0]], 1, wallet_cls=wallet_cls_receiver)
+        wallet_r = wallets[0]["wallet"]
+        wallets = await make_wallets(
+            1, [[3,0,0,0,0]], 1, wallet_cls=wallet_cls_sender)
+        wallet_s = wallets[0]["wallet"]
+        for w in [wallet_r, wallet_s]:
+            await w.sync_wallet(fast=True)
+
+        # destination address for payment:
+        destaddr = str(bitcoin.CCoinAddress.from_scriptPubKey(
+            bitcoin.pubkey_to_p2wpkh_script(bitcoin.privkey_to_pubkey(b"\x01"*33))))
+
+        payment_amt = bitcoin.coins_to_satoshi(payment_amt)
+
+        # *** STEP 1 ***
+        # **************
+
+        # create a normal tx from the sender wallet:
+        payment_psbt = await direct_send(
+            wallet_s, 0,
+            [(destaddr, payment_amt)],
+            accept_callback=dummy_accept_callback,
+            info_callback=dummy_info_callback,
+            with_final_psbt=True)
+
+        print("Initial payment PSBT created:\n{}".format(
+            wallet_s.human_readable_psbt(payment_psbt)))
+        # ensure that the payemnt amount is what was intended:
+        out_amts = [x.nValue for x in payment_psbt.unsigned_tx.vout]
+        # NOTE this would have to change for more than 2 outputs:
+        assert any([out_amts[i] == payment_amt for i in [0, 1]])
+
+        # ensure that we can actually broadcast the created tx:
+        # (note that 'extract_transaction' represents an implicit
+        # PSBT finality check).
+        extracted_tx = payment_psbt.extract_transaction().serialize()
+        # don't want to push the tx right now, because of test structure
+        # (in production code this isn't really needed, we will not
+        # produce invalid payment transactions).
+        assert jm_single().bc_interface.testmempoolaccept(bintohex(extracted_tx)),\
+            "Payment transaction was rejected from mempool."
+
+        # *** STEP 2 ***
+        # **************
+
+        # Simple receiver utxo choice heuristic.
+        # For more generality we test with two receiver-utxos, not one.
+        all_receiver_utxos = await wallet_r.get_all_utxos()
+        # TODO is there a less verbose way to get any 2 utxos from the dict?
+        receiver_utxos_keys = list(all_receiver_utxos.keys())[:2]
+        receiver_utxos = {k: v for k, v in all_receiver_utxos.items(
+            ) if k in receiver_utxos_keys}
+
+        # receiver will do other checks as discussed above, including payment
+        # amount; as discussed above, this is out of the scope of this PSBT test.
+
+        # construct unsigned tx for payjoin-psbt:
+        payjoin_tx_inputs = [(x.prevout.hash[::-1],
+                    x.prevout.n) for x in payment_psbt.unsigned_tx.vin]
+        payjoin_tx_inputs.extend(receiver_utxos.keys())
+        # find payment output and change output
+        pay_out = None
+        change_out = None
+        for o in payment_psbt.unsigned_tx.vout:
+            jm_out_fmt = {"value": o.nValue,
+            "address": str(bitcoin.CCoinAddress.from_scriptPubKey(
+            o.scriptPubKey))}
+            if o.nValue == payment_amt:
+                assert pay_out is None
+                pay_out = jm_out_fmt
+            else:
+                assert change_out is None
+                change_out = jm_out_fmt
+
+        # we now know there were two outputs and know which is payment.
+        # bump payment output with our input:
+        outs = [pay_out, change_out]
+        our_inputs_val = sum([v["value"] for _, v in receiver_utxos.items()])
+        pay_out["value"] += our_inputs_val
+        print("we bumped the payment output value by: ", our_inputs_val)
+        print("It is now: ", pay_out["value"])
+        unsigned_payjoin_tx = bitcoin.make_shuffled_tx(payjoin_tx_inputs, outs,
+                                    version=payment_psbt.unsigned_tx.nVersion,
+                                    locktime=payment_psbt.unsigned_tx.nLockTime)
+        print("we created this unsigned tx: ")
+        print(bitcoin.human_readable_transaction(unsigned_payjoin_tx))
+        # to create the PSBT we need the spent_outs for each input,
+        # in the right order:
+        spent_outs = []
+        for i, inp in enumerate(unsigned_payjoin_tx.vin):
+            input_found = False
+            for j, inp2 in enumerate(payment_psbt.unsigned_tx.vin):
+                if inp.prevout == inp2.prevout:
+                    spent_outs.append(payment_psbt.inputs[j].utxo)
+                    input_found = True
+                    break
+            if input_found:
+                continue
+            # if we got here this input is ours, we must find
+            # it from our original utxo choice list:
+            for ru in receiver_utxos.keys():
+                if (inp.prevout.hash[::-1], inp.prevout.n) == ru:
+                    spent_outs.append(
+                        wallet_r.witness_utxos_to_psbt_utxos(
+                            {ru: receiver_utxos[ru]})[0])
+                    input_found = True
+                    break
+            # there should be no other inputs:
+            assert input_found
+
+        r_payjoin_psbt = await wallet_r.create_psbt_from_tx(
+            unsigned_payjoin_tx, spent_outs=spent_outs)
+        print("Receiver created payjoin PSBT:\n{}".format(
+            wallet_r.human_readable_psbt(r_payjoin_psbt)))
+
+        signresultandpsbt, err = await wallet_r.sign_psbt(
+            r_payjoin_psbt.serialize(), with_sign_result=True)
+        assert not err, err
+        signresult, receiver_signed_psbt = signresultandpsbt
+        assert signresult.num_inputs_final == len(receiver_utxos)
+        assert not signresult.is_final
+
+        print("Receiver signing successful. Payjoin PSBT is now:\n{}".format(
+            wallet_r.human_readable_psbt(receiver_signed_psbt)))
+
+        # *** STEP 3 ***
+        # **************
+
+        # take the half-signed PSBT, validate and co-sign:
+
+        signresultandpsbt, err = await wallet_s.sign_psbt(
+            receiver_signed_psbt.serialize(), with_sign_result=True)
+        assert not err, err
+        signresult, sender_signed_psbt =  signresultandpsbt
+        print("Sender's final signed PSBT is:\n{}".format(
+            wallet_s.human_readable_psbt(sender_signed_psbt)))
+        assert signresult.is_final
+
+        # broadcast the tx
+        extracted_tx = sender_signed_psbt.extract_transaction().serialize()
+        assert jm_single().bc_interface.pushtx(extracted_tx)
+
+    async def test_hr_psbt(self):
+        bitcoin.select_chain_params("bitcoin")
+        for k, v in hr_test_vectors.items():
+            print(PSBTWalletMixin.human_readable_psbt(
+                bitcoin.PartiallySignedTransaction.from_binary(hextobin(v))))
+        bitcoin.select_chain_params("bitcoin/regtest")
 
 @pytest.fixture(scope="module")
 def setup_psbt_wallet():

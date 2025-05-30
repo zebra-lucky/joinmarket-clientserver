@@ -5,9 +5,19 @@ Test doing full coinjoins, bypassing IRC
 
 import os
 import sys
-import pytest
 import copy
+import shutil
+import tempfile
+
+from unittest import IsolatedAsyncioTestCase
+
+from unittest_parametrize import parametrize, ParametrizedTestCase
+
+import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+
+import pytest
+from _pytest.monkeypatch import MonkeyPatch
 
 from jmbase import get_log
 from jmclient import load_test_config, jm_single,\
@@ -28,6 +38,7 @@ absoffer_type_map = {LegacyWallet: "absoffer",
                   SegwitLegacyWallet: "swabsoffer",
                   SegwitWallet: "sw0absoffer"}
 
+
 def make_wallets_to_list(make_wallets_data):
     wallets = [None for x in range(len(make_wallets_data))]
     for i in make_wallets_data:
@@ -35,14 +46,15 @@ def make_wallets_to_list(make_wallets_data):
     assert all(wallets)
     return wallets
 
-def sync_wallets(wallet_services, fast=True):
+
+async def sync_wallets(wallet_services, fast=True):
     for wallet_service in wallet_services:
         wallet_service.synced = False
         wallet_service.gap_limit = 0
         for x in range(20):
             if wallet_service.synced:
                 break
-            wallet_service.sync_wallet(fast=fast)
+            await wallet_service.sync_wallet(fast=fast)
         else:
             assert False, "Failed to sync wallet"
     # because we don't run the monitoring loops for the
@@ -50,6 +62,7 @@ def sync_wallets(wallet_services, fast=True):
     # block manually:
     for wallet_service in wallet_services:
         wallet_service.update_blockheight()
+
 
 def create_orderbook(makers):
     orderbook = []
@@ -75,21 +88,23 @@ def create_taker(wallet, schedule, monkeypatch):
     monkeypatch.setattr(taker, 'auth_counterparty', lambda *args: True)
     return taker
 
-def create_orders(makers):
+
+async def create_orders(makers):
     # fire the order creation immediately (delayed 2s in prod,
     # but this is too slow for test):
     for maker in makers:
-        maker.try_to_create_my_orders()
+        await maker.try_to_create_my_orders()
 
-def init_coinjoin(taker, makers, orderbook, cj_amount):
-    init_data = taker.initialize(orderbook, [])
+
+async def init_coinjoin(taker, makers, orderbook, cj_amount):
+    init_data = await taker.initialize(orderbook, [])
     assert init_data[0], "taker.initialize error"
     active_orders = init_data[4]
     maker_data = {}
     for mid in init_data[4]:
         m = makers[int(mid)]
         # note: '00' is kphex, usually set up by jmdaemon
-        response = m.on_auth_received(
+        response = await m.on_auth_received(
             'TAKER', init_data[4][mid], init_data[2][1:],
             init_data[3], init_data[1], '00')
         assert response[0], "maker.on_auth_received error"
@@ -109,180 +124,209 @@ def init_coinjoin(taker, makers, orderbook, cj_amount):
     return active_orders, maker_data
 
 
-def do_tx_signing(taker, makers, active_orders, txdata):
+async def do_tx_signing(taker, makers, active_orders, txdata):
     taker_final_result = 'not called'
     maker_signatures = {}  # left here for easier debugging
     for mid in txdata[1]:
         m = makers[int(mid)]
-        result = m.on_tx_received('TAKER', txdata[2], active_orders[mid])
+        result = await m.on_tx_received('TAKER', txdata[2], active_orders[mid])
         assert result[0], "maker.on_tx_received error"
         maker_signatures[mid] = result[1]
         for sig in result[1]:
-            taker_final_result = taker.on_sig(mid, sig)
+            taker_final_result = await taker.on_sig(mid, sig)
 
     assert taker_final_result != 'not called'
     return taker_final_result
 
 
-@pytest.mark.parametrize('wallet_cls', (LegacyWallet, SegwitLegacyWallet, SegwitWallet))
-def test_simple_coinjoin(monkeypatch, tmpdir, setup_cj, wallet_cls):
-    def raise_exit(i):
-        raise Exception("sys.exit called")
-    monkeypatch.setattr(sys, 'exit', raise_exit)
-    set_commitment_file(str(tmpdir.join('commitments.json')))
+#@pytest.mark.usefixtures("setup_cj")
+class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
-    MAKER_NUM = 3
-    wallet_services = make_wallets_to_list(make_wallets(
-        MAKER_NUM + 1, wallet_structures=[[4, 0, 0, 0, 0]] * (MAKER_NUM + 1),
-        mean_amt=1, wallet_cls=wallet_cls))
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        load_test_config()
+        jm_single().config.set('POLICY', 'tx_broadcast', 'self')
+        jm_single().bc_interface.tick_forward_chain_interval = 5
+        jm_single().bc_interface.simulate_blocks()
+        sys._exit_ = sys.exit
 
-    jm_single().bc_interface.tickchain()
-    jm_single().bc_interface.tickchain()
+    def tearDown(self):
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(sys, 'exit', sys._exit_)
+        for dc in reactor.getDelayedCalls():
+            dc.cancel()
+        shutil.rmtree(self.tmpdir)
 
-    sync_wallets(wallet_services)
+    @parametrize(
+        'wallet_cls',
+        [
+            (LegacyWallet,),
+            (SegwitLegacyWallet,),
+            (SegwitWallet,),
+        ])
+    async def test_simple_coinjoin(self, wallet_cls):
+        def raise_exit(i):
+            raise Exception("sys.exit called")
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(sys, 'exit', raise_exit)
+        commitment_file = os.path.join(self.tmpdir, 'commitments.json')
+        set_commitment_file(commitment_file)
 
-    makers = [YieldGeneratorBasic(
-        wallet_services[i],
-        [0, 2000, 0, absoffer_type_map[wallet_cls], 10**7, None, None, None]) for i in range(MAKER_NUM)]
-    create_orders(makers)
+        MAKER_NUM = 3
+        wallets = await make_wallets(
+            MAKER_NUM + 1, wallet_structures=[[4, 0, 0, 0, 0]] * (MAKER_NUM + 1),
+            mean_amt=1, wallet_cls=wallet_cls)
+        wallet_services = make_wallets_to_list(wallets)
 
-    orderbook = create_orderbook(makers)
-    assert len(orderbook) == MAKER_NUM
+        jm_single().bc_interface.tickchain()
+        jm_single().bc_interface.tickchain()
 
-    cj_amount = int(1.1 * 10**8)
-    # mixdepth, amount, counterparties, dest_addr, waittime, rounding
-    schedule = [(0, cj_amount, MAKER_NUM, 'INTERNAL', 0, NO_ROUNDING)]
-    taker = create_taker(wallet_services[-1], schedule, monkeypatch)
+        await sync_wallets(wallet_services)
 
-    active_orders, maker_data = init_coinjoin(taker, makers,
-                                              orderbook, cj_amount)
+        makers = [
+            YieldGeneratorBasic(
+                wallet_services[i],
+                [0, 2000, 0, absoffer_type_map[wallet_cls],
+                 10**7, None, None, None])
+            for i in range(MAKER_NUM)]
+        await create_orders(makers)
+        orderbook = create_orderbook(makers)
+        assert len(orderbook) == MAKER_NUM
 
-    txdata = taker.receive_utxos(maker_data)
-    assert txdata[0], "taker.receive_utxos error"
+        cj_amount = int(1.1 * 10**8)
+        # mixdepth, amount, counterparties, dest_addr, waittime, rounding
+        schedule = [(0, cj_amount, MAKER_NUM, 'INTERNAL', 0, NO_ROUNDING)]
+        taker = create_taker(wallet_services[-1], schedule, monkeypatch)
 
-    taker_final_result = do_tx_signing(taker, makers, active_orders, txdata)
-    assert taker_final_result is not False
-    assert taker.on_finished_callback.status is not False
+        active_orders, maker_data = await init_coinjoin(
+            taker, makers, orderbook, cj_amount)
 
+        txdata = await taker.receive_utxos(maker_data)
+        assert txdata[0], "taker.receive_utxos error"
 
-def test_coinjoin_mixdepth_wrap_taker(monkeypatch, tmpdir, setup_cj):
-    def raise_exit(i):
-        raise Exception("sys.exit called")
-    monkeypatch.setattr(sys, 'exit', raise_exit)
-    set_commitment_file(str(tmpdir.join('commitments.json')))
+        taker_final_result = await do_tx_signing(
+            taker, makers, active_orders, txdata)
+        assert taker_final_result is not False
+        assert taker.on_finished_callback.status is not False
 
-    MAKER_NUM = 3
-    wallet_services = make_wallets_to_list(make_wallets(
-        MAKER_NUM + 1,
-        wallet_structures=[[4, 0, 0, 0, 0]] * MAKER_NUM + [[0, 0, 0, 0, 3]],
-        mean_amt=1))
+    async def test_coinjoin_mixdepth_wrap_taker(self):
+        def raise_exit(i):
+            raise Exception("sys.exit called")
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(sys, 'exit', raise_exit)
+        commitment_file = os.path.join(self.tmpdir, 'commitments.json')
+        set_commitment_file(commitment_file)
 
-    for wallet_service in wallet_services:
-        assert wallet_service.max_mixdepth == 4
+        MAKER_NUM = 3
+        wallets = await make_wallets(
+            MAKER_NUM + 1,
+            wallet_structures=[[4, 0, 0, 0, 0]] * MAKER_NUM + [[0, 0, 0, 0, 3]],
+            mean_amt=1)
+        wallet_services = make_wallets_to_list(wallets)
 
-    jm_single().bc_interface.tickchain()
-    jm_single().bc_interface.tickchain()
+        for wallet_service in wallet_services:
+            assert wallet_service.max_mixdepth == 4
 
-    sync_wallets(wallet_services)
+        jm_single().bc_interface.tickchain()
+        jm_single().bc_interface.tickchain()
 
-    cj_fee = 2000
-    makers = [YieldGeneratorBasic(
-        wallet_services[i],
-        [0, cj_fee, 0, absoffer_type_map[SegwitWallet], 10**7, None, None, None]) for i in range(MAKER_NUM)]
-    create_orders(makers)
+        await sync_wallets(wallet_services)
 
-    orderbook = create_orderbook(makers)
-    assert len(orderbook) == MAKER_NUM
+        cj_fee = 2000
+        makers = [
+            YieldGeneratorBasic(
+                wallet_services[i],
+                [0, cj_fee, 0, absoffer_type_map[SegwitWallet],
+                 10**7, None, None, None])
+            for i in range(MAKER_NUM)]
+        await create_orders(makers)
+        orderbook = create_orderbook(makers)
+        assert len(orderbook) == MAKER_NUM
 
-    cj_amount = int(1.1 * 10**8)
-    # mixdepth, amount, counterparties, dest_addr, waittime, rounding
-    schedule = [(4, cj_amount, MAKER_NUM, 'INTERNAL', 0, NO_ROUNDING)]
-    taker = create_taker(wallet_services[-1], schedule, monkeypatch)
+        cj_amount = int(1.1 * 10**8)
+        # mixdepth, amount, counterparties, dest_addr, waittime, rounding
+        schedule = [(4, cj_amount, MAKER_NUM, 'INTERNAL', 0, NO_ROUNDING)]
+        taker = create_taker(wallet_services[-1], schedule, monkeypatch)
 
-    active_orders, maker_data = init_coinjoin(taker, makers,
-                                              orderbook, cj_amount)
+        active_orders, maker_data = await init_coinjoin(
+            taker, makers, orderbook, cj_amount)
 
-    txdata = taker.receive_utxos(maker_data)
-    assert txdata[0], "taker.receive_utxos error"
+        txdata = await taker.receive_utxos(maker_data)
+        assert txdata[0], "taker.receive_utxos error"
 
-    taker_final_result = do_tx_signing(taker, makers, active_orders, txdata)
-    assert taker_final_result is not False
+        taker_final_result = await do_tx_signing(
+            taker, makers, active_orders, txdata)
+        assert taker_final_result is not False
 
-    tx = btc.CMutableTransaction.deserialize(txdata[2])
+        tx = btc.CMutableTransaction.deserialize(txdata[2])
 
-    wallet_service = wallet_services[-1]
-    # TODO change for new tx monitoring:
-    wallet_service.remove_old_utxos(tx)
-    wallet_service.add_new_utxos(tx)
-
-    balances = wallet_service.get_balance_by_mixdepth()
-    assert balances[0] == cj_amount
-    # <= because of tx fee
-    assert balances[4] <= 3 * 10**8 - cj_amount - (cj_fee * MAKER_NUM)
-
-
-def test_coinjoin_mixdepth_wrap_maker(monkeypatch, tmpdir, setup_cj):
-    def raise_exit(i):
-        raise Exception("sys.exit called")
-    monkeypatch.setattr(sys, 'exit', raise_exit)
-    set_commitment_file(str(tmpdir.join('commitments.json')))
-
-    MAKER_NUM = 2
-    wallet_services = make_wallets_to_list(make_wallets(
-        MAKER_NUM + 1,
-        wallet_structures=[[0, 0, 0, 0, 4]] * MAKER_NUM + [[3, 0, 0, 0, 0]],
-        mean_amt=1))
-
-    for wallet_service in wallet_services:
-        assert wallet_service.max_mixdepth == 4
-
-    jm_single().bc_interface.tickchain()
-    jm_single().bc_interface.tickchain()
-
-    sync_wallets(wallet_services)
-
-    cj_fee = 2000
-    makers = [YieldGeneratorBasic(
-        wallet_services[i],
-        [0, cj_fee, 0, absoffer_type_map[SegwitWallet], 10**7, None, None, None]) for i in range(MAKER_NUM)]
-    create_orders(makers)
-    orderbook = create_orderbook(makers)
-    assert len(orderbook) == MAKER_NUM
-
-    cj_amount = int(1.1 * 10**8)
-    # mixdepth, amount, counterparties, dest_addr, waittime, rounding
-    schedule = [(0, cj_amount, MAKER_NUM, 'INTERNAL', 0, NO_ROUNDING)]
-    taker = create_taker(wallet_services[-1], schedule, monkeypatch)
-
-    active_orders, maker_data = init_coinjoin(taker, makers,
-                                              orderbook, cj_amount)
-
-    txdata = taker.receive_utxos(maker_data)
-    assert txdata[0], "taker.receive_utxos error"
-
-    taker_final_result = do_tx_signing(taker, makers, active_orders, txdata)
-    assert taker_final_result is not False
-
-    tx = btc.CMutableTransaction.deserialize(txdata[2])
-
-    for i in range(MAKER_NUM):
-        wallet_service = wallet_services[i]
-        # TODO as above re: monitoring
-        wallet_service.remove_old_utxos(tx)
+        wallet_service = wallet_services[-1]
+        # TODO change for new tx monitoring:
+        await wallet_service.remove_old_utxos(tx)
         wallet_service.add_new_utxos(tx)
 
         balances = wallet_service.get_balance_by_mixdepth()
         assert balances[0] == cj_amount
-        assert balances[4] == 4 * 10**8 - cj_amount + cj_fee
+        # <= because of tx fee
+        assert balances[4] <= 3 * 10**8 - cj_amount - (cj_fee * MAKER_NUM)
 
+    async def test_coinjoin_mixdepth_wrap_maker(self):
+        def raise_exit(i):
+            raise Exception("sys.exit called")
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(sys, 'exit', raise_exit)
+        commitment_file = os.path.join(self.tmpdir, 'commitments.json')
+        set_commitment_file(commitment_file)
 
-@pytest.fixture(scope='module')
-def setup_cj():
-    load_test_config()
-    jm_single().config.set('POLICY', 'tx_broadcast', 'self')
-    jm_single().bc_interface.tick_forward_chain_interval = 5
-    jm_single().bc_interface.simulate_blocks()
-    yield None
-    # teardown
-    for dc in reactor.getDelayedCalls():
-        dc.cancel()
+        MAKER_NUM = 2
+        wallets = await make_wallets(
+            MAKER_NUM + 1,
+            wallet_structures=[[0, 0, 0, 0, 4]] * MAKER_NUM + [[3, 0, 0, 0, 0]],
+            mean_amt=1)
+        wallet_services = make_wallets_to_list(wallets)
+
+        for wallet_service in wallet_services:
+            assert wallet_service.max_mixdepth == 4
+
+        jm_single().bc_interface.tickchain()
+        jm_single().bc_interface.tickchain()
+
+        await sync_wallets(wallet_services)
+
+        cj_fee = 2000
+        makers = [
+            YieldGeneratorBasic(
+                wallet_services[i],
+                [0, cj_fee, 0, absoffer_type_map[SegwitWallet],
+                 10**7, None, None, None])
+            for i in range(MAKER_NUM)]
+        await create_orders(makers)
+        orderbook = create_orderbook(makers)
+        assert len(orderbook) == MAKER_NUM
+
+        cj_amount = int(1.1 * 10**8)
+        # mixdepth, amount, counterparties, dest_addr, waittime, rounding
+        schedule = [(0, cj_amount, MAKER_NUM, 'INTERNAL', 0, NO_ROUNDING)]
+        taker = create_taker(wallet_services[-1], schedule, monkeypatch)
+
+        active_orders, maker_data = await init_coinjoin(
+            taker, makers, orderbook, cj_amount)
+
+        txdata = await taker.receive_utxos(maker_data)
+        assert txdata[0], "taker.receive_utxos error"
+
+        taker_final_result = await do_tx_signing(
+            taker, makers, active_orders, txdata)
+        assert taker_final_result is not False
+
+        tx = btc.CMutableTransaction.deserialize(txdata[2])
+
+        for i in range(MAKER_NUM):
+            wallet_service = wallet_services[i]
+            # TODO as above re: monitoring
+            await wallet_service.remove_old_utxos(tx)
+            wallet_service.add_new_utxos(tx)
+
+            balances = wallet_service.get_balance_by_mixdepth()
+            assert balances[0] == cj_amount
+            assert balances[4] == 4 * 10**8 - cj_amount + cj_fee

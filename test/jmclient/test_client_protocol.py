@@ -1,6 +1,16 @@
 #! /usr/bin/env python
 '''test client-protocol interfacae.'''
 
+import json
+import jmbitcoin as bitcoin
+import twisted
+import base64
+
+import pytest
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 from jmbase import get_log, bintohex
 from jmbase.commands import *
 from jmclient import load_test_config, Taker,\
@@ -13,16 +23,9 @@ from twisted.internet.error import (ConnectionLost, ConnectionAborted,
                                     ConnectionClosed, ConnectionDone)
 from twisted.protocols.amp import UnknownRemoteError
 from twisted.protocols import amp
-from twisted.trial import unittest
 from twisted.test import proto_helpers
 from taker_test_data import t_raw_signed_tx
-from commontest import default_max_cj_fee
-import json
-import jmbitcoin as bitcoin
-import twisted
-import base64
-
-import pytest
+from commontest import default_max_cj_fee, TrialAsyncioTestCase
 
 pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
 
@@ -274,7 +277,7 @@ class DummyClientProtocolFactory(JMClientProtocolFactory):
         return JMTakerClientProtocol(self, self.client, nick_priv=b"\xaa"*32 + b"\x01")
 
 
-class TrialTestJMClientProto(unittest.TestCase):
+class TrialTestJMClientProto(TrialAsyncioTestCase):
 
     def setUp(self):
         global clientfactory
@@ -319,7 +322,7 @@ class TrialTestJMClientProto(unittest.TestCase):
         pass
 
 
-class TestMakerClientProtocol(unittest.TestCase):
+class TestMakerClientProtocol(TrialAsyncioTestCase):
     """
     very basic test case for JMMakerClientProtocol
 

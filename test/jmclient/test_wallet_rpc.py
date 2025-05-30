@@ -4,11 +4,13 @@ import functools
 import json
 import os
 
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor
+
 import jwt
 import pytest
-from twisted.internet import reactor, defer, task
+from twisted.internet import defer, task
 from twisted.web.client import readBody, Headers
-from twisted.trial import unittest
 from autobahn.twisted.websocket import WebSocketClientFactory, \
     connectWS
 
@@ -26,7 +28,7 @@ from jmclient import (
     storage,
 )
 from jmclient.wallet_rpc import api_version_string, CJ_MAKER_RUNNING, CJ_NOT_RUNNING
-from commontest import make_wallets
+from commontest import make_wallets, TrialAsyncioTestCase
 from test_coinjoin import make_wallets_to_list, sync_wallets
 
 from test_websocket import ClientTProtocol, test_tx_hex_1, test_tx_hex_txid
@@ -45,7 +47,8 @@ class JMWalletDaemonT(JMWalletDaemon):
             return True
         return super().check_cookie(request, *args, **kwargs)
 
-class WalletRPCTestBase(object):
+
+class WalletRPCTestBase(TrialAsyncioTestCase):
     """ Base class for set up of tests of the
     Wallet RPC calls using the wallet_rpc.JMWalletDaemon service.
     """
@@ -62,7 +65,7 @@ class WalletRPCTestBase(object):
     # wallet type
     wallet_cls = SegwitWallet
 
-    def setUp(self):
+    async def asyncSetUp(self):
         load_test_config()
         self.clean_out_wallet_files()
         jm_single().bc_interface.tick_forward_chain_interval = 5
@@ -94,11 +97,12 @@ class WalletRPCTestBase(object):
         self.listener_rpc = r
         self.listener_ws = s
         wallet_structures = [self.wallet_structure] * 2
-        self.daemon.services["wallet"] = make_wallets_to_list(make_wallets(
+        wallets = await make_wallets(
             1, wallet_structures=[wallet_structures[0]],
-            mean_amt=self.mean_amt, wallet_cls=self.wallet_cls))[0]
+            mean_amt=self.mean_amt, wallet_cls=self.wallet_cls)
+        self.daemon.services["wallet"] = make_wallets_to_list(wallets)[0]
         jm_single().bc_interface.tickchain()
-        sync_wallets([self.daemon.services["wallet"]])
+        await sync_wallets([self.daemon.services["wallet"]])
         # dummy tx example to force a notification event:
         self.test_tx = CTransaction.deserialize(hextobin(test_tx_hex_1))
         # auth token is not set at the start
@@ -168,6 +172,7 @@ class WalletRPCTestBase(object):
 
     def tearDown(self):
         self.clean_out_wallet_files()
+        reactor.disconnectAll()
         for dc in reactor.getDelayedCalls():
             if not dc.cancelled:
                 dc.cancel()
@@ -198,7 +203,7 @@ class ClientNotifTestFactory(WebSocketClientFactory):
             self.callbackfn = kwargs.pop("callbackfn", None)
         super().__init__(*args, **kwargs)
 
-class TrialTestWRPC_WS(WalletRPCTestBase, unittest.TestCase):
+class TrialTestWRPC_WS(WalletRPCTestBase):
     """ class for testing websocket subscriptions/events etc.
     """
 
@@ -240,7 +245,7 @@ class TrialTestWRPC_WS(WalletRPCTestBase, unittest.TestCase):
         self.daemon.wss_factory.sendTxNotification(self.test_tx,
                                             test_tx_hex_txid)
 
-class TrialTestWRPC_FB(WalletRPCTestBaseFB, unittest.TestCase):
+class TrialTestWRPC_FB(WalletRPCTestBaseFB):
     @defer.inlineCallbacks
     def test_gettimelockaddress(self):
         self.daemon.auth_disabled = True
@@ -294,7 +299,7 @@ class TrialTestWRPC_FB(WalletRPCTestBaseFB, unittest.TestCase):
         # be MAKER_RUNNING since no non-TL-type coin existed:
         assert self.daemon.coinjoin_state == CJ_NOT_RUNNING
 
-class TrialTestWRPC_DisplayWallet(WalletRPCTestBase, unittest.TestCase):
+class TrialTestWRPC_DisplayWallet(WalletRPCTestBase):
 
     @defer.inlineCallbacks
     def do_session_request(self, agent, addr, handler=None, token=None):
@@ -749,7 +754,7 @@ class TrialTestWRPC_DisplayWallet(WalletRPCTestBase, unittest.TestCase):
         assert json_body["seedphrase"]
 
 
-class TrialTestWRPC_JWT(WalletRPCTestBase, unittest.TestCase):
+class TrialTestWRPC_JWT(WalletRPCTestBase):
     @defer.inlineCallbacks
     def do_request(self, agent, method, addr, body, handler, token):
         headers = Headers({"Authorization": ["Bearer " + token]})

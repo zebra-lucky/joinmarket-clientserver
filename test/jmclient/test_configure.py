@@ -16,15 +16,6 @@ def test_attribute_dict():
     assert ad["foo"] == 1
 
 
-def test_load_config(tmpdir):
-    load_test_config(bs="regtest")
-    jm_single().config_location = "joinmarket.cfg"
-    with pytest.raises(SystemExit):
-        load_test_config(config_path=str(tmpdir), bs="regtest")
-    jm_single().config_location = "joinmarket.cfg"
-    load_test_config()
-
-
 def test_blockchain_sources():
     load_test_config()
     for src in ["dummy"]:

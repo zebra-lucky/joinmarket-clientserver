@@ -100,7 +100,10 @@ class FrostIPCServer(IPCBase):
                 new_pubkey = dkg.find_dkg_pubkey(mixdepth, address_type, index)
             if new_pubkey:
                 await self.send_dkg_pubkey(msg_id, new_pubkey)
+            else:
+                raise Exception('No pubkey found or generated')
         except Exception as e:
+            await self.send_dkg_pubkey(msg_id, None)
             jlog.error(f'FrostIPCServer.on_get_dkg_pubkey: {repr(e)}')
 
     async def send_dkg_pubkey(self, msg_id, pubkey):
@@ -129,6 +132,7 @@ class FrostIPCServer(IPCBase):
             await self.send_frost_sig(msg_id, sig, pubkey, tweaked_pubkey)
         except Exception as e:
             jlog.error(f'FrostIPCServer.on_frost_sign: {repr(e)}')
+            await self.send_frost_sig(msg_id, None, None, None)
 
     async def send_frost_sig(self, msg_id, sig, pubkey, tweaked_pubkey):
         try:
@@ -215,7 +219,15 @@ class FrostIPCClient(IPCBase):
             self.msg_futures[self.msg_id] = fut
             await fut
             pubkey = fut.result()
-            jlog.debug('FrostIPCClient.get_dkg_pubkey successfully got pubkey')
+            if pubkey is None:
+                jlog.error(
+                    f'FrostIPCClient.get_dkg_pubkey got None pubkey from '
+                    f'FrostIPCServer for mixdepth={mixdepth}, '
+                    f'address_type={address_type}, index={index}')
+                return pubkey
+            jlog.debug(f'FrostIPCClient.get_dkg_pubkey successfully got '
+                       f'pubkey for mixdepth={mixdepth}, '
+                       f'address_type={address_type}, index={index}')
             return pubkey
         except Exception as e:
             jlog.error(f'FrostIPCClient.get_dkg_pubkey: {repr(e)}')
@@ -237,7 +249,17 @@ class FrostIPCClient(IPCBase):
             self.msg_futures[self.msg_id] = fut
             await fut
             sig, pubkey, tweaked_pubkey = fut.result()
-            jlog.debug('FrostIPCClient.frost_sign successfully got signature')
+            if sig is None:
+                jlog.error(
+                    f'FrostIPCClient.frost_sign got None sig value from '
+                    f'FrostIPCServer for mixdepth={mixdepth}, '
+                    f'address_type={address_type}, index={index}, '
+                    f'sighash={sighash.hex()}')
+                return sig, pubkey, tweaked_pubkey
+            jlog.debug(
+                f'FrostIPCClient.frost_sign successfully got signature '
+                f'for mixdepth={mixdepth}, address_type={address_type}, '
+                f'index={index}, sighash={sighash.hex()}')
             return sig, pubkey, tweaked_pubkey
         except Exception as e:
             jlog.error(f'FrostIPCClient.frost_sign: {repr(e)}')

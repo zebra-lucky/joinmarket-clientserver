@@ -1,6 +1,7 @@
 '''Wallet functionality tests.'''
 import datetime
 import os
+import time
 import json
 from binascii import hexlify, unhexlify
 
@@ -16,41 +17,35 @@ from _pytest.monkeypatch import MonkeyPatch
 import jmbitcoin as btc
 from commontest import ensure_bip65_activated
 from jmbase import get_log, hextobin, bintohex
-from jmclient import load_test_config, jm_single, BaseWallet, \
-    SegwitLegacyWallet,BIP32Wallet, BIP49Wallet, LegacyWallet,\
-    VolatileStorage, get_network, cryptoengine, WalletError,\
-    SegwitWallet, WalletService, SegwitWalletFidelityBonds,\
-    create_wallet, open_test_wallet_maybe, open_wallet, \
-    FidelityBondMixin, FidelityBondWatchonlyWallet,\
-    wallet_gettimelockaddress, UnknownAddressForLabel, TaprootWallet
+from jmclient import (
+    load_test_config, jm_single, BaseWallet, BIP32Wallet, VolatileStorage,
+    get_network, cryptoengine, WalletError, BIP49Wallet, WalletService,
+    TaprootWalletFidelityBonds, create_wallet, open_test_wallet_maybe,
+    open_wallet, FidelityBondMixin, FidelityBondWatchonlyWallet, LegacyWallet,
+    wallet_gettimelockaddress, UnknownAddressForLabel, TaprootWallet,
+    get_blockchain_interface_instance)
 from test_blockchaininterface import sync_test_wallet
 from freezegun import freeze_time
 
-pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
+pytestmark = pytest.mark.usefixtures("setup_regtest_taproot_bitcoind")
 
 testdir = os.path.dirname(os.path.realpath(__file__))
 
-test_create_wallet_filename = "testwallet_for_create_wallet_test"
-test_cache_cleared_filename = "testwallet_for_cache_clear_test"
+test_create_wallet_filename = "taproot_testwallet_for_create_wallet_test"
+test_cache_cleared_filename = "taproot_testwallet_for_cache_clear_test"
+
 log = get_log()
 
 
-def signed_tx_is_segwit(tx):
-    return tx.has_witness()
-
-
-def assert_segwit(tx):
-    assert signed_tx_is_segwit(tx)
-
-
-def assert_not_segwit(tx):
-    assert not signed_tx_is_segwit(tx)
+def assert_taproot(tx):
+    assert (tx.has_witness()
+            and tx.vout[0].scriptPubKey.is_witness_v1_taproot())
 
 
 async def get_populated_wallet(amount=10**8, num=3):
     storage = VolatileStorage()
-    SegwitLegacyWallet.initialize(storage, get_network())
-    wallet = SegwitLegacyWallet(storage)
+    TaprootWallet.initialize(storage, get_network())
+    wallet = TaprootWallet(storage)
     await wallet.async_init(storage)
 
     # fund three wallet addresses at mixdepth 0
@@ -85,38 +80,34 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
     params = {
         'test_is_standard_wallet_script':
-            [SegwitLegacyWallet, SegwitWallet, SegwitWalletFidelityBonds]
+            [TaprootWallet, TaprootWalletFidelityBonds]
     }
 
     def setUp(self):
-        load_test_config()
+        load_test_config(config_path='./test_taproot')
         btc.select_chain_params("bitcoin/regtest")
         #see note in cryptoengine.py:
-        cryptoengine.BTC_P2WPKH.VBYTE = 100
+        cryptoengine.BTC_P2TR.VBYTE = 100
         jm_single().bc_interface.tick_forward_chain_interval = 2
-        SegwitLegacyWallet._get_bip32_base_path_ = \
-            SegwitLegacyWallet._get_bip32_base_path
-        LegacyWallet._get_mixdepth_from_path_ = \
-            LegacyWallet._get_mixdepth_from_path
-        LegacyWallet._get_bip32_mixdepth_path_level_ = \
-            LegacyWallet._get_bip32_mixdepth_path_level
-        LegacyWallet._get_bip32_base_path_ = \
-            LegacyWallet._get_bip32_base_path
-        LegacyWallet._create_master_key_ = \
-            LegacyWallet._create_master_key
+        TaprootWallet._get_mixdepth_from_path_ = \
+            TaprootWallet._get_mixdepth_from_path
+        TaprootWallet._get_bip32_mixdepth_path_level_ = \
+            TaprootWallet._get_bip32_mixdepth_path_level
+        TaprootWallet._get_bip32_base_path_ = \
+            TaprootWallet._get_bip32_base_path
+        TaprootWallet._create_master_key_ = \
+            TaprootWallet._create_master_key
 
     def tearDown(self):
         monkeypatch = MonkeyPatch()
-        monkeypatch.setattr(SegwitLegacyWallet, '_get_bip32_base_path',
-                            SegwitLegacyWallet._get_bip32_base_path_)
-        monkeypatch.setattr(LegacyWallet, '_get_mixdepth_from_path',
-                            LegacyWallet._get_mixdepth_from_path_)
-        monkeypatch.setattr(LegacyWallet, '_get_bip32_mixdepth_path_level',
-                            LegacyWallet._get_bip32_mixdepth_path_level_)
-        monkeypatch.setattr(LegacyWallet, '_get_bip32_base_path',
-                            LegacyWallet._get_bip32_base_path_)
-        monkeypatch.setattr(LegacyWallet, '_create_master_key',
-                            LegacyWallet._create_master_key_)
+        monkeypatch.setattr(TaprootWallet, '_get_mixdepth_from_path',
+                            TaprootWallet._get_mixdepth_from_path_)
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_mixdepth_path_level',
+                            TaprootWallet._get_bip32_mixdepth_path_level_)
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_base_path',
+                            TaprootWallet._get_bip32_base_path_)
+        monkeypatch.setattr(TaprootWallet, '_create_master_key',
+                            TaprootWallet._create_master_key_)
 
         if os.path.exists(test_create_wallet_filename):
             os.remove(test_create_wallet_filename)
@@ -128,45 +119,45 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         get_bip39_vectors())
     async def test_bip39_seeds(self, entropy, mnemonic, key, xpriv):
         jm_single().config.set('BLOCKCHAIN', 'network', 'mainnet')
-        created_entropy = SegwitLegacyWallet.entropy_from_mnemonic(mnemonic)
+        created_entropy = TaprootWallet.entropy_from_mnemonic(mnemonic)
         assert entropy == hexlify(created_entropy).decode('ascii')
         storage = VolatileStorage()
-        SegwitLegacyWallet.initialize(
+        TaprootWallet.initialize(
             storage, get_network(), entropy=created_entropy,
             entropy_extension='TREZOR', max_mixdepth=4)
-        wallet = SegwitLegacyWallet(storage)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
         assert (mnemonic, b'TREZOR') == wallet.get_mnemonic_words()
         assert key == hexlify(wallet._create_master_key()).decode('ascii')
 
         # need to monkeypatch this, else we'll default to the BIP-49 path
         monkeypatch = MonkeyPatch()
-        monkeypatch.setattr(SegwitLegacyWallet, '_get_bip32_base_path',
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_base_path',
                             BIP32Wallet._get_bip32_base_path)
         assert xpriv == wallet.get_bip32_priv_export()
 
-    async def test_bip49_seed(self):
+    async def test_bip86_seed(self):
         jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
         mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
         master_xpriv = 'tprv8ZgxMBicQKsPe5YMU9gHen4Ez3ApihUfykaqUorj9t6FDqy3nP6eoXiAo2ssvpAjoLroQxHqr3R5nE3a5dU3DHTjTgJDd7zrbniJr6nrCzd'
-        account0_xpriv = 'tprv8gRrNu65W2Msef2BdBSUgFdRTGzC8EwVXnV7UGS3faeXtuMVtGfEdidVeGbThs4ELEoayCAzZQ4uUji9DUiAs7erdVskqju7hrBcDvDsdbY'
-        addr0_script_hash = '336caa13e08b96080a32b5d818d59b4ab3b36742'
+        account0_xpriv = 'tprv8gytrHbFLhE7zLJ6BvZWEDDGJe8aS8VrmFnvqpMv8CEZtUbn2NY5KoRKQNpkcL1yniyCBRi7dAPy4kUxHkcSvd9jzLmLMEG96TPwant2jbX'
+        addr0_script = '51203b82b2b2a9185315da6f80da5f06d0440d8a5e1457fa93387c2d919c86ec8786'
 
-        entropy = SegwitLegacyWallet.entropy_from_mnemonic(mnemonic)
+        entropy = TaprootWallet.entropy_from_mnemonic(mnemonic)
         storage = VolatileStorage()
-        SegwitLegacyWallet.initialize(
+        TaprootWallet.initialize(
             storage, get_network(), entropy=entropy, max_mixdepth=0)
-        wallet = SegwitLegacyWallet(storage)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
         assert (mnemonic, None) == wallet.get_mnemonic_words()
         assert account0_xpriv == wallet.get_bip32_priv_export(0)
         script = await wallet.get_external_script(0)
-        assert addr0_script_hash == hexlify(script[2:-1]).decode('ascii')
+        assert addr0_script == hexlify(script).decode('ascii')
 
         # FIXME: is this desired behaviour? BIP49 wallet will not return xpriv for
         # the root key but only for key after base path
         monkeypatch = MonkeyPatch()
-        monkeypatch.setattr(SegwitLegacyWallet, '_get_bip32_base_path',
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_base_path',
                             BIP32Wallet._get_bip32_base_path)
         assert master_xpriv == wallet.get_bip32_priv_export()
 
@@ -175,21 +166,21 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
         entropy = unhexlify('000102030405060708090a0b0c0d0e0f')
         storage = VolatileStorage()
-        LegacyWallet.initialize(
+        TaprootWallet.initialize(
             storage, get_network(), entropy=entropy, max_mixdepth=0)
 
         # test vector 1 is using hardened derivation for the account/mixdepth level
         monkeypatch = MonkeyPatch()
-        monkeypatch.setattr(LegacyWallet, '_get_mixdepth_from_path',
+        monkeypatch.setattr(TaprootWallet, '_get_mixdepth_from_path',
                             BIP49Wallet._get_mixdepth_from_path)
-        monkeypatch.setattr(LegacyWallet, '_get_bip32_mixdepth_path_level',
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_mixdepth_path_level',
                             BIP49Wallet._get_bip32_mixdepth_path_level)
-        monkeypatch.setattr(LegacyWallet, '_get_bip32_base_path',
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_base_path',
                             BIP32Wallet._get_bip32_base_path)
-        monkeypatch.setattr(LegacyWallet, '_create_master_key',
+        monkeypatch.setattr(TaprootWallet, '_create_master_key',
                             BIP32Wallet._create_master_key)
 
-        wallet = LegacyWallet(storage)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         assert wallet.get_bip32_priv_export() == 'xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi'
@@ -230,21 +221,21 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
         entropy = unhexlify('4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be')
         storage = VolatileStorage()
-        LegacyWallet.initialize(
+        TaprootWallet.initialize(
             storage, get_network(), entropy=entropy, max_mixdepth=0)
 
         # test vector 3 is using hardened derivation for the account/mixdepth level
         monkeypatch = MonkeyPatch()
-        monkeypatch.setattr(LegacyWallet, '_get_mixdepth_from_path',
+        monkeypatch.setattr(TaprootWallet, '_get_mixdepth_from_path',
                             BIP49Wallet._get_mixdepth_from_path)
-        monkeypatch.setattr(LegacyWallet, '_get_bip32_mixdepth_path_level',
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_mixdepth_path_level',
                             BIP49Wallet._get_bip32_mixdepth_path_level)
-        monkeypatch.setattr(LegacyWallet, '_get_bip32_base_path',
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_base_path',
                             BIP32Wallet._get_bip32_base_path)
-        monkeypatch.setattr(LegacyWallet, '_create_master_key',
+        monkeypatch.setattr(TaprootWallet, '_create_master_key',
                             BIP32Wallet._create_master_key)
 
-        wallet = LegacyWallet(storage)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         assert wallet.get_bip32_priv_export() == 'xprv9s21ZrQH143K25QhxbucbDDuQ4naNntJRi4KUfWT7xo4EKsHt2QJDu7KXp1A3u7Bi1j8ph3EGsZ9Xvz9dGuVrtHHs7pXeTzjuxBrCmmhgC6'
@@ -256,20 +247,20 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         'mixdepth,internal,index,address,wif',
         [
             (0, BaseWallet.ADDRESS_TYPE_EXTERNAL, 0,
-             'mpCX9EbdXpcrKMtjEe1fqFhvzctkfzMYTX',
-             'cVqtSSoVxFyPqTRGfeESi31uCYfgTF4tGWRtGeVs84fzybiX5TPk'),
+             'bcrt1pwr88j8y5hs57fktnlxvs8ynzpx2v78vcn3z2wjq3gxjhec8naedsenq84j',
+             'cUYX9yfrAnbm7LyjiaYUjVAp83pD6WMffaQNyKUf6ubUuFUcwWGx'),
             (0, BaseWallet.ADDRESS_TYPE_EXTERNAL, 5,
-             'mtj85a3pFppRhrxNcFig1k7ECshrZjJ9XC',
-             'cMsFXc4TRw9PTcCTv7x9mr88rDeGXBTLEV67mKaw2cxCkjkhL32G'),
+             'bcrt1pj9y406c0fwtsj6ntnnpzkwzq3tmsa3t9n6rcwelut8cs48a8sp7qmfylrx',
+             'cUxhCGWR7DddkKthD2zFf22RLJzQQfPeMvPxQHfYaPNwQy1fB7TH'),
             (0, BaseWallet.ADDRESS_TYPE_INTERNAL, 3,
-             'n1EaQuqvTRm719hsSJ7yRsj49JfoG1C86q',
-             'cUgSTqnAtvYoQRXCYy4wCFfaks2Zrz1d55m6mVhFyVhQbkDi7JGJ'),
+             'bcrt1plajm8x83lekgnvhkxtm5jehmsvlkdfefnxln7lpka0psgk0vn8nqjhgrhn',
+             'cTwM3mu54nJt2DJ51RfJxHAivVUdazNW7nXgwaejHfg86Xd6NHe9'),
             (2, BaseWallet.ADDRESS_TYPE_INTERNAL, 2,
-             'mfxkBk7uDhmF5PJGS9d1NonGiAxPwJqQP4',
-             'cPcZXSiXPuS5eiT4oDrDKi1mFumw5D1RcWzK2gkGdEHjEz99eyXn')
+             'bcrt1pgfhvh4f699qujwnmd9kylv86uf5shc3ecz0ggvte0rza7rejhvwqz3mnal',
+             'cPx3oVxi2Frn54n4uFTpfTEbqpgPpqC7RMrcCbUCSNSv1Y9RyLUA')
         ])
-    async def test_bip32_addresses_p2pkh(self, mixdepth,
-                                         internal, index, address, wif):
+    async def test_bip32_addresses_p2tr(self, mixdepth,
+                                        internal, index, address, wif):
         """
         Test with a random but fixed entropy
         """
@@ -277,53 +268,16 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
         entropy = unhexlify('2e0339ba89b4a1272cdf78b27ee62669ee01992a59e836e2807051be128ca817')
         storage = VolatileStorage()
-        LegacyWallet.initialize(
+        TaprootWallet.initialize(
             storage, get_network(), entropy=entropy, max_mixdepth=3)
 
         monkeypatch = MonkeyPatch()
-        monkeypatch.setattr(LegacyWallet, '_get_bip32_base_path',
+        monkeypatch.setattr(TaprootWallet, '_get_bip32_base_path',
                             BIP32Wallet._get_bip32_base_path)
-        monkeypatch.setattr(LegacyWallet, '_create_master_key',
+        monkeypatch.setattr(TaprootWallet, '_create_master_key',
                             BIP32Wallet._create_master_key)
 
-        wallet = LegacyWallet(storage)
-        await wallet.async_init(storage)
-
-        # wallet needs to know about all intermediate keys
-        for i in range(index + 1):
-            await wallet.get_new_script(mixdepth, internal)
-
-        assert wif == wallet.get_wif(mixdepth, internal, index)
-        assert address == await wallet.get_addr(mixdepth, internal, index)
-
-    @parametrize(
-        'mixdepth,internal,index,address,wif',
-        [
-            (0, 0, 0,
-             '2MzY5yyonUY7zpHspg7jB7WQs1uJxKafQe4',
-             'cRAGLvPmhpzJNgdMT4W2gVwEW3fusfaDqdQWM2vnWLgXKzCWKtcM'),
-            (0, 0, 5,
-             '2MsKvqPGStp3yXT8UivuAaGwfPzT7xYwSWk',
-             'cSo3h7nRuV4fwhVPXeTDJx6cBCkjAzS9VM8APXViyjoSaMq85ZKn'),
-            (0, 1, 3,
-             '2N7k6wiQqkuMaApwGhk3HKrifprUSDydqUv',
-             'cTwq3UsZa8STVmwZR94dDphgqgdLFeuaRFD1Ea44qjbjFfKEb1n5'),
-            (2, 1, 2,
-             '2MtE6gzHgmEXeWzKsmCJFEqkrpNuBDvoRnz',
-             'cPV8FZuCvrRpk4RhmhpjnSucHhaQZUan4Vbyo1NVQtuAxurW9grb')
-        ])
-    async def test_bip32_addresses_p2sh_p2wpkh(self, mixdepth,
-                                               internal, index, address, wif):
-        """
-        Test with a random but fixed entropy
-        """
-        jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
-
-        entropy = unhexlify('2e0339ba89b4a1272cdf78b27ee62669ee01992a59e836e2807051be128ca817')
-        storage = VolatileStorage()
-        SegwitLegacyWallet.initialize(
-            storage, get_network(), entropy=entropy, max_mixdepth=3)
-        wallet = SegwitLegacyWallet(storage)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         # wallet needs to know about all intermediate keys
@@ -337,14 +291,14 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         'timenumber,address,wif',
         [
             (0,
-             'bcrt1qgysu2eynn6klarz200ctgev7gqhhp7hwsdaaec3c7h0ltmc3r68q87c2d3',
-              'cVASAS6bpC5yctGmnsKaDz7D8CxEwccUtpjSNBQzeV2fw8ox8RR9'),
+             'bcrt1qj9ewr9kq0043dj90l9w28znydtzcmqgeqs3gua8c2ph6aj5v2d5s459kxa',
+              'cW5MjSamNpGVqwd1xMdUa6bHBdkKxCb8QovCrm44juAAfD6N64Ud'),
             (50,
-             'bcrt1q0cnscj0hlf6xqzlqwk7swngd3kmvd6unn49j9h4zgg68kg8fd7gq0r87lf',
-             'cMtnaLzC2EW3URnmAapRnPQECGwGruxqXJpAnuRjKup3pkWfrxRE'),
+             'bcrt1qjsnz39xvguzxjnydg89zkx25rv2sdnlsa9q6q0s0rkk925xru5mqn6en8c',
+             'cVXG11bFA6fiey2nAgBwNe7Y4cL1ZqLJ5uYtDiJsXoUV91phNk8n'),
             (1,
-            'bcrt1q26vw0q28rz2r2ktehp8w5yfzkzskrc4fxqdhzjy0f88kzhjvlfrs7fyas6',
-            'cU8G1YAAxGZMqNsXxApBAahb8pbxhxryDshFdX5eRT9FV4gHNVXT')
+            'bcrt1q249qewynmkhyqzplrezg0xjcughgguzgh7wznagewwxpq3838r9sfw2yks',
+            'cTGBzJXiSsTArDFNtpyAgDRuumBK4Gj7S6RjuVYiLHytnLNgHGTw')
         ])
     async def test_bip32_timelocked_addresses(self, timenumber,
                                               address, wif):
@@ -352,9 +306,9 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
         entropy = unhexlify('2e0339ba89b4a1272cdf78b27ee62669ee01992a59e836e2807051be128ca817')
         storage = VolatileStorage()
-        SegwitWalletFidelityBonds.initialize(
+        TaprootWalletFidelityBonds.initialize(
             storage, get_network(), entropy=entropy, max_mixdepth=1)
-        wallet = SegwitWalletFidelityBonds(storage)
+        wallet = TaprootWalletFidelityBonds(storage)
         await wallet.async_init(storage)
         mixdepth = FidelityBondMixin.FIDELITY_BOND_MIXDEPTH
         address_type = FidelityBondMixin.BIP32_TIMELOCK_ID
@@ -378,8 +332,8 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
                                              timenumber, locktime_string):
         jm_single().config.set("BLOCKCHAIN", "network", "mainnet")
         storage = VolatileStorage()
-        SegwitWalletFidelityBonds.initialize(storage, get_network())
-        wallet = SegwitWalletFidelityBonds(storage)
+        TaprootWalletFidelityBonds.initialize(storage, get_network())
+        wallet = TaprootWalletFidelityBonds(storage)
         await wallet.async_init(storage)
 
         m = FidelityBondMixin.FIDELITY_BOND_MIXDEPTH
@@ -396,8 +350,8 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
     async def test_gettimelockaddress_in_past(self):
         jm_single().config.set("BLOCKCHAIN", "network", "mainnet")
         storage = VolatileStorage()
-        SegwitWalletFidelityBonds.initialize(storage, get_network())
-        wallet = SegwitWalletFidelityBonds(storage)
+        TaprootWalletFidelityBonds.initialize(storage, get_network())
+        wallet = TaprootWalletFidelityBonds(storage)
         await wallet.async_init(storage)
 
         assert await wallet_gettimelockaddress(wallet, "2020-01") == ""
@@ -407,18 +361,18 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
     @parametrize(
         'index,wif',
         [
-            (0, 'cVQbz7DB5JQ1TGsg9Dbm32VtJbXBHaj39Yc9QLkaGpRgXcibHTDH'),
-            (9, 'cULqe2sYZ4z8jZTGybr2Bzf4EyiT5Ts6wAE3mvCUofRuTVsofR8N'),
-            (50, 'cQNp7cQbrwjWuxmbkZF8ax9ogmTuWp3Ykb9LEpainhRTJXYc8Deu')
+            (0, 'cU3iQ73p1mYyJ9aDY4VahGFG8cqK3QAW3VeSiStEXm1sBiFgdiSJ'),
+            (9, 'cT2X1VVE48NfAiuPzgsc8ogJ19cXWV17S4AkUgzWD61jEd6ZtezZ'),
+            (50, 'cQrqAeoSVFHUM2wkt11YkCUc3erkVkhr2KaxrbqxKtuA8ztt2qCr')
         ])
     async def test_bip32_burn_keys(self, index, wif):
         jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
 
         entropy = unhexlify('2e0339ba89b4a1272cdf78b27ee62669ee01992a59e836e2807051be128ca817')
         storage = VolatileStorage()
-        SegwitWalletFidelityBonds.initialize(
+        TaprootWalletFidelityBonds.initialize(
             storage, get_network(), entropy=entropy, max_mixdepth=1)
-        wallet = SegwitWalletFidelityBonds(storage)
+        wallet = TaprootWalletFidelityBonds(storage)
         await wallet.async_init(storage)
         mixdepth = FidelityBondMixin.FIDELITY_BOND_MIXDEPTH
         address_type = FidelityBondMixin.BIP32_BURN_ID
@@ -432,8 +386,8 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
     async def test_import_key(self):
         jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
         storage = VolatileStorage()
-        SegwitLegacyWallet.initialize(storage, get_network())
-        wallet = SegwitLegacyWallet(storage)
+        TaprootWallet.initialize(storage, get_network())
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         await wallet.import_private_key(
@@ -453,7 +407,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         del storage
 
         storage = VolatileStorage(data=data)
-        wallet = SegwitLegacyWallet(storage)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         imported_paths_md0 = list(wallet.yield_imported_paths(0))
@@ -463,9 +417,9 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
         # verify imported addresses
         assert await wallet.get_address_from_path(imported_paths_md0[0]) == \
-            '2MzY5yyonUY7zpHspg7jB7WQs1uJxKafQe4'
+            'bcrt1p3e8d2nwlpf6rm0q36auq736cpj5y5uw337kf2nj9yn9tkg48n9dq5zgmdq'
         assert await wallet.get_address_from_path(imported_paths_md1[0]) == \
-            '2MwbXnJrPP4rnwpgRhvNPP44J6tMokDexZB'
+            'bcrt1ph8wfv0zm42lgvd23xe2070khe285grmum6fm8ehv7e2zkpnvcs6qjjm7nr'
 
         # test remove key
         await wallet.remove_imported_key(path=imported_paths_md0[0])
@@ -477,13 +431,13 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         'wif, type_check',
         [
             ('cRAGLvPmhpzJNgdMT4W2gVwEW3fusfaDqdQWM2vnWLgXKzCWKtcM',
-             assert_segwit)
+             assert_taproot)
         ])
     async def test_signing_imported(self, wif, type_check):
         jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
         storage = VolatileStorage()
-        SegwitLegacyWallet.initialize(storage, get_network())
-        wallet = SegwitLegacyWallet(storage)
+        TaprootWallet.initialize(storage, get_network())
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         MIXDEPTH = 0
@@ -491,9 +445,10 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         addr = await wallet.get_address_from_path(path)
         utxo = fund_wallet_addr(wallet, addr)
         # The dummy output is constructed as an unspendable p2sh:
+        p2tr_script = btc.CScript(bytes.fromhex('5120' + '00'*32))
         tx = btc.mktx([utxo],
-                    [{"address": str(btc.CCoinAddress.from_scriptPubKey(
-                        btc.CScript(b"\x00").to_p2sh_scriptPubKey())),
+                    [{"address":
+                        str(btc.CCoinAddress.from_scriptPubKey(p2tr_script)),
                       "value": 10**8 - 9000}])
         script = await wallet.get_script_from_path(path)
         success, msg = await wallet.sign_tx(tx, {0: (script, 10**8)})
@@ -505,9 +460,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
     @parametrize(
         'wallet_cls,type_check',
         [
-            (LegacyWallet, assert_not_segwit),
-            (SegwitLegacyWallet, assert_segwit),
-            (SegwitWallet, assert_segwit),
+            (TaprootWallet, assert_taproot),
         ])
     async def test_signing_simple(self, wallet_cls, type_check):
         jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
@@ -517,11 +470,14 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         await wallet.async_init(storage)
         addr = await wallet.get_internal_addr(0)
         utxo = fund_wallet_addr(wallet, addr)
-        # The dummy output is constructed as an unspendable p2sh:
+        path = "m/86'/1'/0'/0/0"
+        privkey, engine = wallet._get_key_from_path(
+            wallet.path_repr_to_path(path))
+        pubkey = engine.privkey_to_pubkey(privkey)
         tx = btc.mktx([utxo],
-                [{"address": str(btc.CCoinAddress.from_scriptPubKey(
-                    btc.CScript(b"\x00").to_p2sh_scriptPubKey())),
-                  "value": 10**8 - 9000}])    
+                      [{"address": str(btc.CCoinAddress.from_scriptPubKey(
+                            btc.pubkey_to_p2tr_script(pubkey))),
+                        "value": 10**8 - 9000}])
         script = await wallet.get_script(
             0, BaseWallet.ADDRESS_TYPE_INTERNAL, 0)
         success, msg = await wallet.sign_tx(tx, {0: (script, 10**8)})
@@ -542,15 +498,16 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         ])
     async def test_spend_to_p2traddr(self, hexspk):
         storage = VolatileStorage()
-        SegwitWallet.initialize(storage, get_network(), entropy=b"\xaa"*16)
-        wallet = SegwitWallet(storage)
+        TaprootWallet.initialize(storage, get_network(), entropy=b"\xaa"*16)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
         addr = await wallet.get_internal_addr(0)
         utxo = fund_wallet_addr(wallet, addr)
         sPK = btc.CScript(hextobin(hexspk))
-        tx = btc.mktx([utxo],
-                [{"address": str(btc.CCoinAddress.from_scriptPubKey(sPK)),
-                  "value": 10**8 - 9000}])
+        tx = btc.mktx(
+            [utxo],
+            [{"address": str(btc.CCoinAddress.from_scriptPubKey(sPK)),
+            "value": 10**8 - 9000}])
         script = await wallet.get_script(
             0, BaseWallet.ADDRESS_TYPE_INTERNAL, 0)
         success, msg = await wallet.sign_tx(tx, {0: (script, 10**8)})
@@ -569,8 +526,8 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
         ensure_bip65_activated()
         storage = VolatileStorage()
-        SegwitWalletFidelityBonds.initialize(storage, get_network())
-        wallet = SegwitWalletFidelityBonds(storage)
+        TaprootWalletFidelityBonds.initialize(storage, get_network())
+        wallet = TaprootWalletFidelityBonds(storage)
         await wallet.async_init(storage)
 
         timenumber = 0
@@ -739,7 +696,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         wallet =  await get_populated_wallet(num=0)
         storage = wallet._storage
         with pytest.raises(WalletError):
-            SegwitLegacyWallet.initialize(storage, get_network())
+            TaprootWallet.initialize(storage, get_network())
 
     async def test_is_known(self):
         wallet =  await get_populated_wallet(num=0)
@@ -768,7 +725,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         del storage
 
         storage = VolatileStorage(data=data)
-        wallet = SegwitLegacyWallet(storage)
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         assert wallet.get_next_unused_index(0, BaseWallet.ADDRESS_TYPE_INTERNAL) == 3
@@ -816,46 +773,10 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
         assert path_new == path
 
-    @parametrize(
-        'timenumber,timestamp',
-        [
-            (0, 1577836800),
-            (50, 1709251200),
-            (300, 2366841600),
-            (1000, None), #too far in the future
-            (-1, None) #before epoch
-        ])
-    async def test_timenumber_to_timestamp(self, timenumber, timestamp):
-        try:
-            implied_timestamp = FidelityBondMixin._time_number_to_timestamp(
-                timenumber)
-            assert implied_timestamp == timestamp
-        except ValueError:
-            #None means the timenumber is intentionally invalid
-            assert timestamp == None
-
-    @parametrize(
-        'timestamp,timenumber',
-        [
-            (1577836800, 0),
-            (1709251200, 50),
-            (2366841600, 300),
-            (1577836801, None), #not exactly midnight on first of month
-            (4133980800, None), #too far in future
-            (1575158400, None) #before epoch
-        ])
-    async def test_timestamp_to_timenumber(self, timestamp, timenumber):
-        try:
-            implied_timenumber = FidelityBondMixin.timestamp_to_time_number(
-                timestamp)
-            assert implied_timenumber == timenumber
-        except ValueError:
-            assert timenumber == None
-
     async def test_wrong_wallet_cls(self):
         storage = VolatileStorage()
-        SegwitLegacyWallet.initialize(storage, get_network())
-        wallet = SegwitLegacyWallet(storage)
+        TaprootWallet.initialize(storage, get_network())
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         wallet.save()
@@ -872,8 +793,8 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
     async def test_wallet_id(self):
         storage1 = VolatileStorage()
-        SegwitLegacyWallet.initialize(storage1, get_network())
-        wallet1 = SegwitLegacyWallet(storage1)
+        TaprootWallet.initialize(storage1, get_network())
+        wallet1 = TaprootWallet(storage1)
         await wallet1.async_init(storage1)
 
         storage2 = VolatileStorage()
@@ -885,14 +806,24 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         assert wallet1.get_wallet_id() != wallet2.get_wallet_id()
 
         storage2 = VolatileStorage()
-        SegwitLegacyWallet.initialize(storage2, get_network(),
+        TaprootWallet.initialize(storage2, get_network(),
                                       entropy=wallet1._entropy)
-        wallet2 = SegwitLegacyWallet(storage2)
+        wallet2 = TaprootWallet(storage2)
         await wallet2.async_init(storage2)
 
         assert wallet1.get_wallet_id() == wallet2.get_wallet_id()
 
     async def test_cache_cleared(self):
+        orig_bc_interface = jm_single().bc_interface
+
+        def place_back_bc_interface():
+            jm_single().bc_interface = orig_bc_interface
+
+        self.addCleanup(place_back_bc_interface)
+        time_ms = int(time.time() * 1000)
+        jm_single().bc_interface = get_blockchain_interface_instance(
+            jm_single().config,
+            rpc_wallet_name=f'jm-test-taproot-wallet-noprivkeys-{time_ms}')
         # test plan:
         # 1. create a new wallet and sync from scratch
         # 2. read its cache as an object
@@ -903,7 +834,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         if os.path.exists(test_cache_cleared_filename):
             os.remove(test_cache_cleared_filename)
         wallet = await create_wallet(test_cache_cleared_filename,
-                                     b"hunter2", 2, SegwitWallet)
+                                     b"hunter2", 2, TaprootWallet)
         # note: we use the WalletService as an encapsulation
         # of the wallet here because we want to be able to sync,
         # but we do not actually start the service and go into
@@ -915,11 +846,11 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         # to get the cache to save, we need to
         # use an address:
         addr = await wallet_service.get_new_addr(0,0)
-        jm_single().bc_interface.grab_coins(addr, 1.0)
+        orig_bc_interface.grab_coins(addr, 1.0)
         await wallet_service.transaction_monitor()
         path_to_corrupt = list(wallet._cache.keys())[0]
         # we'll just corrupt the first address and script:
-        entry_to_corrupt = wallet._cache[path_to_corrupt][b"84'"][b"1'"][b"0'"][b'0'][b'0']
+        entry_to_corrupt = wallet._cache[path_to_corrupt][b"86'"][b"1'"][b"0'"][b'0'][b'0']
         entry_to_corrupt[b'A'] = "notanaddress"
         entry_to_corrupt[b'S'] = "notascript"
         wallet_service.wallet.save()
@@ -951,8 +882,8 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         wif = 'cRAGLvPmhpzJNgdMT4W2gVwEW3fusfaDqdQWM2vnWLgXKzCWKtcM'
 
         storage = VolatileStorage()
-        SegwitLegacyWallet.initialize(storage, get_network())
-        wallet = SegwitLegacyWallet(storage)
+        TaprootWallet.initialize(storage, get_network())
+        wallet = TaprootWallet(storage)
         await wallet.async_init(storage)
 
         path = await wallet.import_private_key(1, wif)
@@ -1014,6 +945,17 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         storage_data = wallet._storage.file_data
 
         # actual test
+        orig_bc_interface = jm_single().bc_interface
+
+        def place_back_bc_interface():
+            jm_single().bc_interface = orig_bc_interface
+
+        self.addCleanup(place_back_bc_interface)
+        time_ms = int(time.time() * 1000)
+        jm_single().bc_interface = get_blockchain_interface_instance(
+            jm_single().config,
+            rpc_wallet_name=f'jm-test-taproot-wallet-noprivkeys-{time_ms}')
+
         new_mixdepth = max_mixdepth - 1
         storage = VolatileStorage(data=storage_data)
         new_wallet = type(wallet)(storage, mixdepth=new_mixdepth)
@@ -1032,15 +974,15 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
     async def test_watchonly_wallet(self):
         jm_single().config.set('BLOCKCHAIN', 'network', 'testnet')
         storage = VolatileStorage()
-        SegwitWalletFidelityBonds.initialize(storage, get_network())
-        wallet = SegwitWalletFidelityBonds(storage)
+        TaprootWalletFidelityBonds.initialize(storage, get_network())
+        wallet = TaprootWalletFidelityBonds(storage)
         await wallet.async_init(storage)
 
         paths = [
-            "m/84'/1'/0'/0/0",
-            "m/84'/1'/0'/1/0",
-            "m/84'/1'/0'/2/0:1577836800",
-            "m/84'/1'/0'/2/0:2314051200"
+            "m/86'/1'/0'/0/0",
+            "m/86'/1'/0'/1/0",
+            "m/86'/1'/0'/2/0:1577836800",
+            "m/86'/1'/0'/2/0:2314051200"
         ]
         burn_path = "m/49'/1'/0'/3/0"
 
@@ -1137,8 +1079,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
     @parametrize(
         'password, wallet_cls',
         [
-            ("hunter2", SegwitLegacyWallet),
-            ("hunter2", SegwitWallet),
+            ("hunter2", TaprootWallet),
         ])
     async def test_create_wallet(self, password, wallet_cls):
         wallet_name = test_create_wallet_filename
@@ -1164,9 +1105,8 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
     @parametrize(
         'wallet_cls',
         [
-            (SegwitLegacyWallet,),
-            (SegwitWallet,),
-            (SegwitWalletFidelityBonds,)
+            (TaprootWallet,),
+            (TaprootWalletFidelityBonds,)
         ])
     async def test_is_standard_wallet_script(self, wallet_cls):
         storage = VolatileStorage()
@@ -1181,9 +1121,9 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
 
     async def test_is_standard_wallet_script_nonstandard(self):
         storage = VolatileStorage()
-        SegwitWalletFidelityBonds.initialize(
+        TaprootWalletFidelityBonds.initialize(
             storage, get_network(), max_mixdepth=0)
-        wallet = SegwitWalletFidelityBonds(storage)
+        wallet = TaprootWalletFidelityBonds(storage)
         await wallet.async_init(storage)
         import_path = await wallet.import_private_key(
             0, 'cRAGLvPmhpzJNgdMT4W2gVwEW3fusfaDqdQWM2vnWLgXKzCWKtcM')

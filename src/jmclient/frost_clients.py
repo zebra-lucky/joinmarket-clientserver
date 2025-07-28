@@ -451,8 +451,11 @@ class DKGClient:
             if ready_list and len(ready_list) == len(self.hostpubkeys) - 1:
                 ext_recovery = coordinator.ext_recovery
                 self.finalize(session_id, coordinator.cmsg2, ext_recovery)
+                return True
+            return False
         except Exception as e:
             jlog.error(f'on_dkg_finalized: {repr(e)}')
+            return False
 
     async def wait_on_dkg_output(self, session_id):
         try:
@@ -733,7 +736,8 @@ class FROSTClient(DKGClient):
                 if p == hostpubkey:
                     self.my_id = (i+1).to_bytes(32, 'big')
                     break
-            assert self.my_id is not None
+            assert self.my_id is not None, (f'unknown hostpubkey '
+                                            f'{hostpubkey.hex()}')
             hostpubkeyhash = sha256(hostpubkey).digest()
             session_id = sha256(os.urandom(32)).digest()
             coordinator = FROSTCoordinator(session_id=session_id,
@@ -822,7 +826,7 @@ class FROSTClient(DKGClient):
                 return None, None, None, None, None
             pubkey = self.find_pubkey_by_pubkeyhash(pubkeyhash)
             if not pubkey:
-                raise Exception(f'pubkey for {pubkeyhash.hex()} not found')
+                raise Exception(f'pubkey for {pubkeyhash} not found')
             xpubkey = XOnlyPubKey(pubkey[1:])
             if not xpubkey.verify_schnorr(session_id, hextobin(sig)):
                 raise Exception(f'signature verification failed')
@@ -905,9 +909,6 @@ class FROSTClient(DKGClient):
                 raise Exception(f'secshare not found for '
                                 f'{dkg_session_id.hex()}')
             _pubshares = dkg._dkg_pubshares.get(dkg_session_id)
-            if not _pubshares:
-                raise Exception(f'pubshares not found for '
-                                f'{dkg_session_id.hex()}')
             pubshares = []
             for i, pubshare in enumerate(_pubshares):
                 if (i+1) not in ids:

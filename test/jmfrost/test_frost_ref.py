@@ -2,9 +2,22 @@
 
 import json
 import os
+import secrets
 import sys
+import time
+from typing import List, Optional, Tuple
 
-from .trusted_keygen import trusted_dealer_keygen
+from jmfrost.frost_ref.reference import (
+    PlainPk, XonlyPk, nonce_agg, SessionContext, partial_sig_verify,
+    partial_sig_agg, get_xonly_pk, group_pubkey_and_tweak, individual_pk,
+    deterministic_sign, cbytes, sign, InvalidContributionError,
+    check_frost_key_compatibility, check_pubshares_correctness,
+    check_group_pubkey_correctness, nonce_gen_internal, AGGREGATOR_ID,
+    partial_sig_verify_internal, nonce_gen)
+from jmfrost.frost_ref.utils.bip340 import (
+    schnorr_verify, bytes_from_int, int_from_bytes, point_mul, G, n)
+
+from trusted_keygen import trusted_dealer_keygen
 
 
 def fromhex_all(l):
@@ -402,7 +415,8 @@ def test_sig_agg_vectors():
         session_ctx = SessionContext(aggnonce_tmp, ids_tmp, pubshares_tmp, tweaks_tmp, tweak_modes_tmp, msg)
         assert_raises(exception, lambda: partial_sig_agg(psigs_tmp, ids_tmp, session_ctx), except_fn)
 
-def test_sign_and_verify_random(iterations: int) -> None:
+def test_sign_and_verify_random() -> None:
+    iterations = 4
     for itr in range(iterations):
         secure_rng = secrets.SystemRandom()
         # randomly choose a number: 2 <= number <= 10

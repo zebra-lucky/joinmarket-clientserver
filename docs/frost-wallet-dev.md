@@ -13,6 +13,14 @@ usage.
 Usual wallet usage interact with FROST/DKG functionality via IPC code in
 `frost_ipc.py` (currently `AF_UNIX` socket for simplicity).
 
+`jmclient.wallet_utils.open_wallet` has two new parameters:
+- `load_dkg=False`: by default do not load `DKGStorage`
+- `dkg_read_only=True`: load `DKGStorage` for read only commands
+
+Additionally `open_wallet` params `read_only` and `dkg_read_only` can not
+be mutually unset by design.
+
+
 ## Structure of DKG data in the DKGStorage
 
 ```

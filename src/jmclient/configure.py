@@ -46,8 +46,7 @@ class AttributeDict(object):
             logFormatter = logging.Formatter(
                 ('%(asctime)s [%(threadName)-12.12s] '
                  '[%(levelname)-5.5s]  %(message)s'))
-            logsdir = os.path.join(os.path.dirname(
-                global_singleton.config_location), "logs")
+            logsdir = os.path.join(global_singleton.datadir, "logs")
             fileHandler = logging.FileHandler(
                 logsdir + '/{}.log'.format(value))
             fileHandler.setFormatter(logFormatter)
@@ -77,7 +76,7 @@ global_singleton.joinmarket_alert = joinmarket_alert
 global_singleton.debug_silence = debug_silence
 global_singleton.config = ConfigParser(strict=False)
 #This is reset to a full path after load_program_config call
-global_singleton.config_location = 'joinmarket.cfg'
+global_singleton.config_fname = 'joinmarket.cfg'
 #as above
 global_singleton.commit_file_location = 'cmtdata/commitments.json'
 global_singleton.wait_for_commitments = 0
@@ -698,13 +697,12 @@ def load_program_config(config_path: str = "", bs: Optional[str] = None,
         os.makedirs(os.path.join(global_singleton.datadir, "logs"))
     if not os.path.exists(os.path.join(global_singleton.datadir, "cmtdata")):
         os.makedirs(os.path.join(global_singleton.datadir, "cmtdata"))
-    global_singleton.config_location = os.path.join(
-        global_singleton.datadir, global_singleton.config_location)
+    config_location = os.path.join(
+        global_singleton.datadir, global_singleton.config_fname)
 
     _remove_unwanted_default_settings(global_singleton.config)
     try:
-        loadedFiles = global_singleton.config.read(
-            [global_singleton.config_location])
+        loadedFiles = global_singleton.config.read([config_location])
     except UnicodeDecodeError:
         jmprint("Error loading `joinmarket.cfg`, invalid file format.",
             "info")
@@ -717,7 +715,7 @@ def load_program_config(config_path: str = "", bs: Optional[str] = None,
         global_singleton.config.set("BLOCKCHAIN", "blockchain_source", bs)
     # Create default config file if not found
     if len(loadedFiles) != 1:
-        with open(global_singleton.config_location, "w") as configfile:
+        with open(config_location, "w") as configfile:
             configfile.write(defaultconfig)
         jmprint("Created a new `joinmarket.cfg`. Please review and adopt the "
               "settings and restart joinmarket.", "info")
@@ -787,8 +785,7 @@ def load_program_config(config_path: str = "", bs: Optional[str] = None,
             # and setting that in the plugin object; the plugin
             # itself will switch on its own logging when ready,
             # attaching a filehandler to the global log.
-            plogsdir = os.path.join(os.path.dirname(
-                global_singleton.config_location), "logs", p.name)
+            plogsdir = os.path.join(global_singleton.datadir, "logs", p.name)
             if not os.path.exists(plogsdir):
                 os.makedirs(plogsdir)
             p.set_log_dir(plogsdir)
@@ -851,7 +848,8 @@ def _get_bitcoin_rpc_credentials(_config: ConfigParser) -> Tuple[str, str]:
             raise ValueError("Invalid RPC auth credentials `rpc_user` and `rpc_password`")
         return rpc_user, rpc_password
 
-def get_blockchain_interface_instance(_config: ConfigParser):
+def get_blockchain_interface_instance(_config: ConfigParser, *,
+                                      rpc_wallet_name=None):
     # todo: refactor joinmarket module to get rid of loops
     # importing here is necessary to avoid import loops
     from jmclient.blockchaininterface import BitcoinCoreInterface, \
@@ -876,8 +874,21 @@ def get_blockchain_interface_instance(_config: ConfigParser):
             else:
                 raise ValueError('wrong network configured: ' + network)
         rpc_user, rpc_password = _get_bitcoin_rpc_credentials(_config)
-        rpc_wallet_file = _config.get("BLOCKCHAIN", "rpc_wallet_file")
+        if rpc_wallet_name is not None:
+            rpc_wallet_file = rpc_wallet_name
+        else:
+            rpc_wallet_file = _config.get("BLOCKCHAIN", "rpc_wallet_file")
         rpc = JsonRpc(rpc_host, rpc_port, rpc_user, rpc_password)
+        # code for TaprootWallet testing
+        if rpc_wallet_name and source in ['bitcoin-rpc', 'regtest',
+                                          'bitcoin-rpc-no-history']:
+            # create wallet with disable_private_keys=True, blank=True
+            rpc.call('createwallet', [rpc_wallet_name, True, True])
+            loaded_wallets = rpc.call("listwallets", [])
+            if not rpc_wallet_name in loaded_wallets:
+                log.info(f"Loading Bitcoin RPC wallet {rpc_wallet_name }...")
+                rpc.call('loadwallet', [rpc_wallet_name])
+                log.info("Done.")
         if source == 'bitcoin-rpc': #pragma: no cover
             bc_interface = BitcoinCoreInterface(rpc, network,
                 rpc_wallet_file)
@@ -933,7 +944,9 @@ def update_persist_config(section: str, name: str, value: Any) -> bool:
     sectionname = None
     newlines = []
     match_found = False
-    with open(jm_single().config_location, "r") as f:
+    config_location = os.path.join(jm_single().datadir,
+                                   jm_single().config_fname)
+    with open(config_location, "r") as f:
         for line in f.readlines():
             newline  = line
             # ignore comment lines
@@ -956,7 +969,7 @@ def update_persist_config(section: str, name: str, value: Any) -> bool:
         return False
     # success: update in-mem and re-persist
     jm_single().config.set(section, name, value)
-    with open(jm_single().config_location, "wb") as f:
+    with open(config_location, "wb") as f:
         f.writelines([x.encode("utf-8") for x in newlines])
     return True
 

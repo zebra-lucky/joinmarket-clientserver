@@ -30,7 +30,7 @@ from .cryptoengine import TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WSH,\
     TYPE_P2WPKH, TYPE_TIMELOCK_P2WSH, TYPE_SEGWIT_WALLET_FIDELITY_BONDS,\
     TYPE_WATCHONLY_FIDELITY_BONDS, TYPE_WATCHONLY_TIMELOCK_P2WSH, \
     TYPE_WATCHONLY_P2WPKH, TYPE_P2TR, TYPE_P2TR_FROST, ENGINES, \
-    detect_script_type, EngineError
+    detect_script_type, EngineError, TYPE_TAPROOT_WALLET_FIDELITY_BONDS
 from .storage import DKGRecoveryStorage
 from .support import get_random_bytes
 from . import mn_encode, mn_decode
@@ -526,7 +526,7 @@ class DKGManager:
             return self._dkg_pubkey.get(session)
 
     def add_party_data(self, *, session_id, dkg_output, hostpubkeys, t,
-                       recovery_data, ext_recovery):
+                       recovery_data, ext_recovery, save_dkg=True):
         assert isinstance(dkg_output, tuple)
         assert isinstance(dkg_output.secshare, bytes)
         assert len(dkg_output.secshare) == 32
@@ -547,12 +547,13 @@ class DKGManager:
         self._dkg_t[session_id] = t
 
         recovery_dkg = self.recovery_storage.data[self.RECOVERY_STORAGE_KEY]
-        recovery_dkg[session_id] = (ext_recovery, recovery_data)
+        recovery_dkg[session_id] = [ext_recovery, recovery_data]
 
-        self.save()
+        if save_dkg:
+            self.save()
 
     def add_coordinator_data(self, *, session_id, dkg_output, hostpubkeys, t,
-                             recovery_data, ext_recovery):
+                             recovery_data, ext_recovery, save_dkg=True):
         assert isinstance(dkg_output, tuple)
         assert isinstance(dkg_output.secshare, bytes)
         assert len(dkg_output.secshare) == 32
@@ -583,9 +584,10 @@ class DKGManager:
         self._dkg_sessions[md_type_idx] = session_id
 
         recovery_dkg = self.recovery_storage.data[self.RECOVERY_STORAGE_KEY]
-        recovery_dkg[session_id] = (ext_recovery, recovery_data)
+        recovery_dkg[session_id] = [ext_recovery, recovery_data]
 
-        self.save()
+        if save_dkg:
+            self.save()
 
     async def dkg_recover(self, dkgrec_path):
         rec_storage = DKGRecoveryStorage(
@@ -660,14 +662,13 @@ class DKGManager:
                     self._dkg_pubkey.pop(c, None)
                     self._dkg_hostpubkeys.pop(c, None)
                     self._dkg_t.pop(c, None)
-                    self.save()
-                for md_type_idx in list(self._dkg_sessions.keys()):
-                    if self._dkg_sessions[md_type_idx] == c:
-                        self._dkg_sessions.pop(md_type_idx)
-                if c in self._dkg_secshare:
                     res += f'dkg data for session {sess_id} deleted\n'
                 else:
                     res +=f'not found dkg data for session {sess_id}\n'
+                for md_type_idx in list(self._dkg_sessions.keys()):
+                    if self._dkg_sessions[md_type_idx] == c:
+                        res += f'session data for session {sess_id} deleted\n'
+                        self._dkg_sessions.pop(md_type_idx)
             self.save()
             return res
         except Exception as e:
@@ -706,23 +707,22 @@ class DKGManager:
                 f'\nNot decrypted sesions:\n{json.dumps(enc_res, indent=4)}')
 
     def recdkg_rm(self, session_ids: list):
-        res = ''
-        rm_sess_ids = []
-        not_found_ids = []
-        recovery_dkg = self.recovery_storage.data[self.RECOVERY_STORAGE_KEY]
-        for session_id, (ext_recovery, recovery_data) in recovery_dkg.items():
-            if session_id in session_ids:
-                rm_sess_ids.append(session_id)
-            else:
-                not_found_ids.append(session_id)
-        for session_id in rm_sess_ids:
-            del recovery_dkg[session_id]
-            res += (f'dkg recovery data for session {session_id.hex()}'
-                    f' deleted\n')
-        for session_id in not_found_ids:
-            res += f'not found dkg data for session {session_id.hex()}\n'
-        self.save()
-        return res
+        try:
+            res = ''
+            rec_dkg = self.recovery_storage.data[self.RECOVERY_STORAGE_KEY]
+            for sess_id in session_ids:
+                c = hextobin(sess_id)
+                if c in rec_dkg.keys():
+                    rec_dkg.pop(c, None)
+                    res += (f'dkg recovery data for session {sess_id}'
+                            f' deleted\n')
+                else:
+                    res += (f'not found dkg recovery data for session'
+                            f' {sess_id}\n')
+            self.save()
+            return res
+        except Exception as e:
+            jmprint(f'error: {repr(e)}', 'error')
 
 
 class BaseWallet(object):
@@ -870,7 +870,8 @@ class BaseWallet(object):
             return 'p2pkh'
         elif self.TYPE == TYPE_P2SH_P2WPKH:
             return 'p2sh-p2wpkh'
-        elif self.TYPE in (TYPE_P2TR, TYPE_P2TR_FROST):
+        elif self.TYPE in (TYPE_P2TR, TYPE_TAPROOT_WALLET_FIDELITY_BONDS,
+                           TYPE_P2TR_FROST):
             return 'p2tr'
         elif self.TYPE in (TYPE_P2WPKH,
                 TYPE_SEGWIT_WALLET_FIDELITY_BONDS):
@@ -3305,8 +3306,11 @@ class SegwitWallet(ImportWalletMixin, BIP39WalletMixin, PSBTWalletMixin, SNICKER
 class SegwitWalletFidelityBonds(FidelityBondMixin, SegwitWallet):
     TYPE = TYPE_SEGWIT_WALLET_FIDELITY_BONDS
 
-class TaprootWallet(BIP39WalletMixin, BIP86Wallet):
+class TaprootWallet(ImportWalletMixin, BIP39WalletMixin, PSBTWalletMixin, SNICKERWalletMixin, BIP86Wallet):
     TYPE = TYPE_P2TR
+
+class TaprootWalletFidelityBonds(FidelityBondMixin, TaprootWallet):
+    TYPE = TYPE_TAPROOT_WALLET_FIDELITY_BONDS
 
 
 class BIP32FrostMixin(BaseWallet):

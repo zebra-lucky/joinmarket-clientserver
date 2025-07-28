@@ -26,7 +26,8 @@ from .wallet import (Mnemonic, estimate_tx_fee, WalletError, BaseWallet, ImportW
                      SegwitWallet, SegwitLegacyWallet, FidelityBondMixin,
                      FidelityBondWatchonlyWallet, SegwitWalletFidelityBonds,
                      UTXOManager, WALLET_IMPLEMENTATIONS, compute_tx_locktime,
-                     UnknownAddressForLabel, TaprootWallet, FrostWallet)
+                     UnknownAddressForLabel, TaprootWallet, FrostWallet,
+                     TaprootWalletFidelityBonds, DKGManager)
 from .storage import (Argon2Hash, Storage, StorageError, RetryableStorageError,
                       StoragePasswordError, VolatileStorage,
                       DKGStorage, DKGRecoveryStorage)
@@ -83,7 +84,7 @@ from .websocketserver import JmwalletdWebSocketServerFactory, \
 from .wallet_rpc import JMWalletDaemon
 from .bond_calc import get_bond_values
 from .frost_clients import FROSTClient
-from .frost_ipc import FrostIPCClient
+from .frost_ipc import FrostIPCServer, FrostIPCClient
 # Set default logging handler to avoid "No handler found" warnings.
 
 try:

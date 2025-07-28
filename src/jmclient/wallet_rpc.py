@@ -526,7 +526,7 @@ class JMWalletDaemon(Service):
             # We're running the tumbler.
             assert self.tumble_log is not None
 
-            logsdir = os.path.join(os.path.dirname(jm_single().config_location), "logs")
+            logsdir = os.path.join(jm_single().datadir, "logs")
             sfile = os.path.join(logsdir, self.tumbler_options['schedulefile'])
 
             tumbler_taker_finished_update(self.taker, sfile, self.tumble_log, self.tumbler_options, res, fromtx, waittime, txdetails)
@@ -1467,8 +1467,7 @@ class JMWalletDaemon(Service):
             except ScheduleGenerationErrorNoFunds:
                 raise NotEnoughCoinsForTumbler()
 
-            logsdir = os.path.join(os.path.dirname(jm_single().config_location),
-                                   "logs")
+            logsdir = os.path.join(jm_single().datadir, "logs")
             sfile = os.path.join(logsdir, tumbler_options['schedulefile'])
             with open(sfile, "wb") as f:
                 f.write(schedule_to_text(schedule))
@@ -1521,7 +1520,7 @@ class JMWalletDaemon(Service):
             if not self.tumbler_options or not self.coinjoin_state == CJ_TAKER_RUNNING:
                 return make_jmwalletd_response(request, status=404)
 
-            logsdir = os.path.join(os.path.dirname(jm_single().config_location), "logs")
+            logsdir = os.path.join(jm_single().datadir, "logs")
             sfile = os.path.join(logsdir, self.tumbler_options['schedulefile'])
             res, schedule = get_schedule(sfile)
 

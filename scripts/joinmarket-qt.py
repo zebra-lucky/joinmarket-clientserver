@@ -2462,7 +2462,7 @@ if isinstance(jm_single().bc_interface, RegtestBitcoinCoreInterface):
     #trigger start with a fake tx
     jm_single().bc_interface.pushtx(b"\x00"*20)
 
-logsdir = os.path.join(os.path.dirname(jm_single().config_location), "logs")
+logsdir = os.path.join(jm_single().datadir, "logs")
 #tumble log will not always be used, but is made available anyway:
 tumble_log = get_tumble_log(logsdir)
 #ignored makers list persisted across entire app run

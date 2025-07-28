@@ -172,3 +172,98 @@ def setup_regtest_bitcoind(pytestconfig):
     local_command(stop_cmd)
     # note, it is better to clean out ~/.bitcoin/regtest but too
     # dangerous to automate it here perhaps
+
+
+@pytest.fixture(scope="session")
+def setup_regtest_taproot_bitcoind(pytestconfig):
+    """
+    Setup regtest bitcoind and handle its clean up.
+    """
+    conf = pytestconfig.getoption("--btcconf")
+    rpcuser = pytestconfig.getoption("--btcuser")
+    rpcpassword = pytestconfig.getoption("--btcpwd")
+    bitcoin_path = pytestconfig.getoption("--btcroot")
+    bitcoind_path = os.path.join(bitcoin_path, "bitcoind")
+    bitcoincli_path = os.path.join(bitcoin_path, "bitcoin-cli")
+    start_cmd = f'{bitcoind_path} -regtest -daemon -txindex -conf={conf}'
+    stop_cmd = f'{bitcoincli_path} -regtest -rpcuser={rpcuser} -rpcpassword={rpcpassword} stop'
+
+    # determine bitcoind version
+    try:
+        bitcoind_version = get_bitcoind_version(bitcoind_path, conf)
+    except RuntimeError as exc:
+        pytest.exit(f"Cannot setup tests, bitcoind failing.\n{exc}")
+
+    if bitcoind_version[0] >= 26:
+        start_cmd += ' -allowignoredconf=1'
+    local_command(start_cmd, bg=True)
+    root_cmd = f'{bitcoincli_path} -regtest -rpcuser={rpcuser} -rpcpassword={rpcpassword}'
+    wallet_name = 'jm-test-taproot-wallet'
+    # Bitcoin Core v0.21+ does not create default wallet
+    # From Bitcoin Core 0.21.0 there is support for descriptor wallets, which
+    # are default from 23.x+ (including 22.99.0 development versions).
+    # We don't support descriptor wallets yet.
+    if bitcoind_version[0] >= 27:
+        create_wallet = (f'{root_cmd} -rpcwait -named createwallet '
+                         f'wallet_name={wallet_name} descriptors=true')
+    else:
+        pytest.exit("Cannot setup tests, bitcoind version "
+                    "must be 27 or greater.\n")
+    local_command(create_wallet)
+    local_command(f'{root_cmd} loadwallet {wallet_name}')
+    for i in range(2):
+        cpe = local_command(f'{root_cmd} -rpcwallet={wallet_name} getnewaddress')
+        if cpe.returncode != 0:
+            pytest.exit(f"Cannot setup tests, bitcoin-cli failing.\n{cpe.stdout.decode('utf-8')}")
+        destn_addr = cpe.stdout[:-1].decode('utf-8')
+        local_command(f'{root_cmd} -rpcwallet={wallet_name} generatetoaddress 301 {destn_addr}')
+        sleep(1)
+    yield
+    # shut down bitcoind
+    local_command(stop_cmd)
+    # note, it is better to clean out ~/.bitcoin/regtest but too
+    # dangerous to automate it here perhaps
+
+
+@pytest.fixture(scope="session")
+def setup_regtest_frost_bitcoind(pytestconfig):
+    """
+    Setup regtest bitcoind and handle its clean up.
+    """
+    conf = pytestconfig.getoption("--btcconf")
+    rpcuser = pytestconfig.getoption("--btcuser")
+    rpcpassword = pytestconfig.getoption("--btcpwd")
+    bitcoin_path = pytestconfig.getoption("--btcroot")
+    bitcoind_path = os.path.join(bitcoin_path, "bitcoind")
+    bitcoincli_path = os.path.join(bitcoin_path, "bitcoin-cli")
+    start_cmd = f'{bitcoind_path} -regtest -daemon -txindex -conf={conf}'
+    stop_cmd = f'{bitcoincli_path} -regtest -rpcuser={rpcuser} -rpcpassword={rpcpassword} stop'
+
+    # determine bitcoind version
+    try:
+        bitcoind_version = get_bitcoind_version(bitcoind_path, conf)
+    except RuntimeError as exc:
+        pytest.exit(f"Cannot setup tests, bitcoind failing.\n{exc}")
+
+    if bitcoind_version[0] >= 26:
+        start_cmd += ' -allowignoredconf=1'
+    local_command(start_cmd, bg=True)
+    root_cmd = f'{bitcoincli_path} -regtest -rpcuser={rpcuser} -rpcpassword={rpcpassword}'
+    wallet_name = 'jm-test-frost-wallet'
+    # Bitcoin Core v0.21+ does not create default wallet
+    # From Bitcoin Core 0.21.0 there is support for descriptor wallets, which
+    # are default from 23.x+ (including 22.99.0 development versions).
+    # We don't support descriptor wallets yet.
+    if bitcoind_version[0] >= 27:
+        create_wallet = (f'{root_cmd} -rpcwait -named createwallet '
+                         f'wallet_name={wallet_name} descriptors=true')
+    else:
+        pytest.exit("Cannot setup tests, bitcoind version "
+                    "must be 27 or greater.\n")
+    local_command(create_wallet)
+    local_command(f'{root_cmd} loadwallet {wallet_name} true true')
+    yield
+    # shut down bitcoind
+    local_command(stop_cmd)
+    # note, it is better to clean out ~/.bitcoin/regtest but too
+    # dangerous to automate it here perhaps

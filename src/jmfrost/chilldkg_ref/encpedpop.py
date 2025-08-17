@@ -1,15 +1,14 @@
 from typing import Tuple, List, NamedTuple, NoReturn
 
-from ..secp256k1proto.secp256k1 import Scalar, GE
-from ..secp256k1proto.ecdh import ecdh_libsecp256k1
-from ..secp256k1proto.keys import pubkey_gen_plain
-from ..secp256k1proto.util import int_from_bytes
+from ..secp256k1lab.secp256k1 import Scalar, GE
+from ..secp256k1lab.ecdh import ecdh_libsecp256k1
+from ..secp256k1lab.keys import pubkey_gen_plain
 
 from . import simplpedpop
 from .util import (
     UnknownFaultyParticipantOrCoordinatorError,
     tagged_hash_bip_dkg,
-    FaultyParticipantOrCoordinatorError,
+    FaultyParticipantError,
     FaultyCoordinatorError,
 )
 
@@ -29,16 +28,18 @@ def ecdh(
         data += their_pubkey + my_pubkey
     assert len(data) == 32 + 2 * 33
     data += context
-    return Scalar(int_from_bytes(tagged_hash_bip_dkg("encpedpop ecdh", data)))
+    ret: Scalar = Scalar.from_bytes_wrapping(
+        tagged_hash_bip_dkg("encpedpop ecdh", data)
+    )
+    return ret
 
 
 def self_pad(symkey: bytes, nonce: bytes, context: bytes) -> Scalar:
     # Pad for symmetric encryption to ourselves
-    return Scalar(
-        int_from_bytes(
-            tagged_hash_bip_dkg("encaps_multi self_pad", symkey + nonce + context)
-        )
+    pad: Scalar = Scalar.from_bytes_wrapping(
+        tagged_hash_bip_dkg("encaps_multi self_pad", symkey + nonce + context)
     )
+    return pad
 
 
 def encaps_multi(
@@ -84,7 +85,8 @@ def encrypt_multi(
     plaintexts: List[Scalar],
 ) -> List[Scalar]:
     pads = encaps_multi(secnonce, pubnonce, deckey, enckeys, context, idx)
-    assert len(plaintexts) == len(pads)
+    if len(plaintexts) != len(pads):
+        raise ValueError
     ciphertexts = [plaintext + pad for plaintext, pad in zip(plaintexts, pads)]
     return ciphertexts
 
@@ -179,8 +181,10 @@ def participant_step1(
     idx: int,
     random: bytes,
 ) -> Tuple[ParticipantState, ParticipantMsg]:
-    assert t < 2 ** (4 * 8)
-    assert len(random) == 32
+    if t >= 2 ** (4 * 8):
+        raise ValueError
+    if len(random) != 32:
+        raise ValueError
     n = len(enckeys)
 
     # Derive an encryption nonce and a seed for SimplPedPop.
@@ -248,7 +252,8 @@ def participant_investigate(
 ) -> NoReturn:
     simpl_inv_data, enc_secshare, pads = error.inv_data
     enc_partial_secshares, partial_pubshares = cinv
-    assert len(enc_partial_secshares) == len(pads)
+    if len(enc_partial_secshares) != len(pads):
+        raise ValueError
     partial_secshares = [
         enc_partial_secshare - pad
         for enc_partial_secshare, pad in zip(enc_partial_secshares, pads)
@@ -292,7 +297,7 @@ def coordinator_step(
     pubnonces = [pmsg.pubnonce for pmsg in pmsgs]
     for i in range(n):
         if len(pmsgs[i].enc_shares) != n:
-            raise FaultyParticipantOrCoordinatorError(
+            raise FaultyParticipantError(
                 i, "Participant sent enc_shares with invalid length"
             )
     enc_secshares = [

@@ -8,8 +8,8 @@ from random import randint
 from typing import Tuple, List, Optional
 from secrets import token_bytes as random_bytes
 
-from jmfrost.secp256k1proto.secp256k1 import GE, G, Scalar
-from jmfrost.secp256k1proto.keys import pubkey_gen_plain
+from jmfrost.secp256k1lab.secp256k1 import GE, G, Scalar
+from jmfrost.secp256k1lab.keys import pubkey_gen_plain
 
 from jmfrost.chilldkg_ref.util import (
     FaultyParticipantOrCoordinatorError,
@@ -22,8 +22,7 @@ import jmfrost.chilldkg_ref.simplpedpop as simplpedpop
 import jmfrost.chilldkg_ref.encpedpop as encpedpop
 import jmfrost.chilldkg_ref.chilldkg as chilldkg
 
-from chilldkg_example import (
-    simulate_chilldkg_full as simulate_chilldkg_full_example)
+from chilldkg_example import simulate_chilldkg_full as simulate_chilldkg_full_example
 
 
 def test_chilldkg_params_validate():
@@ -80,6 +79,17 @@ def test_vss_correctness():
             assert len(secshares) == n
             assert all(
                 VSSCommitment.verify_secshare(secshares[i], vss.commit().pubshare(i))
+                for i in range(n)
+            )
+
+            vssc_tweaked, tweak, pubtweak = vss.commit().invalid_taproot_commit()
+            assert VSSCommitment.verify_secshare(
+                vss.secret() + tweak, vss.commit().commitment_to_secret() + pubtweak
+            )
+            assert all(
+                VSSCommitment.verify_secshare(
+                    secshares[i] + tweak, vssc_tweaked.pubshare(i)
+                )
                 for i in range(n)
             )
 
@@ -313,7 +323,7 @@ def check_correctness_dkg_output(t, n, dkg_outputs: List[simplpedpop.DKGOutput])
 
     # Check that each secshare matches the corresponding pubshare
     secshares_scalar = [
-        None if secshare is None else Scalar.from_bytes(secshare)
+        None if secshare is None else Scalar.from_bytes_checked(secshare)
         for secshare in secshares
     ]
     for i in range(1, n + 1):

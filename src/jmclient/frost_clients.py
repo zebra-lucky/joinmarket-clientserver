@@ -34,7 +34,7 @@ from jmfrost.chilldkg_ref.chilldkg import (
 from jmfrost.chilldkg_ref import encpedpop
 from jmfrost.chilldkg_ref import simplpedpop
 from jmfrost.chilldkg_ref import vss
-from jmfrost.secp256k1proto import secp256k1
+from jmfrost.secp256k1lab import secp256k1
 from jmfrost.frost_ref import reference as frost
 from jmfrost.frost_ref.utils.bip340 import schnorr_verify
 

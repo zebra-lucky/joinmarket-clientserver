@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from ..secp256k1proto.secp256k1 import GE, G, Scalar
-from ..secp256k1proto.util import tagged_hash
+from ..secp256k1lab.secp256k1 import GE, G, Scalar
+from ..secp256k1lab.util import tagged_hash
 
 from .util import tagged_hash_bip_dkg
 
@@ -95,7 +95,7 @@ class VSSCommitment:
         # The function returns the updated VSS commitment and the tweak `t` which
         # must be added to all secret shares of the commitment.
         pk = self.commitment_to_secret()
-        secshare_tweak = Scalar.from_bytes(
+        secshare_tweak = Scalar.from_bytes_checked(
             tagged_hash("TapTweak", pk.to_bytes_compressed())
         )
         pubshare_tweak = secshare_tweak * G
@@ -112,7 +112,7 @@ class VSS:
     @staticmethod
     def generate(seed: bytes, t: int) -> VSS:
         coeffs = [
-            Scalar.from_bytes(
+            Scalar.from_bytes_checked(
                 tagged_hash_bip_dkg("vss coeffs", seed + i.to_bytes(4, byteorder="big"))
             )
             for i in range(t)

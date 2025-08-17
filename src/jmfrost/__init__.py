@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 
-# chilldkg_ref, secp256k1proto code is from
+# chilldkg_ref, secp256k1lab code is from
 # https://github.com/BlockstreamResearch/bip-frost-dkg
 #
-# commit 1731341f04157592e2f184cb00a37c4d331188e3
-# Author: Tim Ruffing <me@real-or-random.org>
-# Date:   Wed Dec 18 23:42:26 2024 +0100
+# commit 0f9e4b95b2e1ef4a0d335908e512ddaca60ebd99
+# Merge: aff38ce 7ddab85
+# Author: Jonas Nick <jonasd.nick@gmail.com>
+# Date:   Thu May 8 07:40:00 2025 +0000
 #
-#     text: Use links for internal references
+#     Merge pull request #93 from jonasnick/address-siv-comments
 
 # frost_ref is from
 # https://github.com/siv2r/bip-frost-signing

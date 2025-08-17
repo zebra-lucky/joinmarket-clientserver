@@ -1,8 +1,8 @@
 from secrets import token_bytes as random_bytes
 from typing import List, NamedTuple, NewType, Tuple, Optional, NoReturn
 
-from ..secp256k1proto.bip340 import schnorr_sign, schnorr_verify
-from ..secp256k1proto.secp256k1 import GE, Scalar
+from ..secp256k1lab.bip340 import schnorr_sign, schnorr_verify
+from ..secp256k1lab.secp256k1 import GE, Scalar
 from .util import (
     BIP_TAG,
     FaultyParticipantOrCoordinatorError,
@@ -35,7 +35,7 @@ def pop_msg(idx: int) -> bytes:
     return idx.to_bytes(4, byteorder="big")
 
 
-def pop_prove(seckey: bytes, idx: int, aux_rand: bytes = 32 * b"\x00") -> Pop:
+def pop_prove(seckey: bytes, idx: int) -> Pop:
     sig = schnorr_sign(
         pop_msg(idx), seckey, aux_rand=random_bytes(32), tag_prefix=POP_MSG_TAG
     )
@@ -176,9 +176,12 @@ def participant_step2(
     t, n, idx, com_to_secret = state
     coms_to_secrets, sum_coms_to_nonconst_terms, pops = cmsg
 
-    assert len(coms_to_secrets) == n
-    assert len(sum_coms_to_nonconst_terms) == t - 1
-    assert len(pops) == n
+    if (
+        len(coms_to_secrets) != n
+        or len(sum_coms_to_nonconst_terms) != t - 1
+        or len(pops) != n
+    ):
+        raise ValueError
 
     if coms_to_secrets[idx] != com_to_secret:
         raise FaultyCoordinatorError(
@@ -219,7 +222,10 @@ def participant_step2(
 
     threshold_pubkey = sum_coms_tweaked.commitment_to_secret()
     pubshares = [
-        sum_coms_tweaked.pubshare(i) if i != idx else pubshare_tweaked for i in range(n)
+        sum_coms_tweaked.pubshare(i)
+        if i != idx
+        else pubshare_tweaked  # We have computed our own pubshare already.
+        for i in range(n)
     ]
     dkg_output = DKGOutput(
         secshare_tweaked.to_bytes(),
@@ -236,6 +242,9 @@ def participant_investigate(
     partial_secshares: List[Scalar],
 ) -> NoReturn:
     n, idx, secshare, pubshare = error.inv_data
+    if len(partial_secshares) != n:
+        raise ValueError
+
     partial_pubshares = cinv.partial_pubshares
 
     if GE.sum(*partial_pubshares) != pubshare:
@@ -279,6 +288,8 @@ def participant_investigate(
 def coordinator_step(
     pmsgs: List[ParticipantMsg], t: int, n: int
 ) -> Tuple[CoordinatorMsg, DKGOutput, bytes]:
+    if len(pmsgs) != n:
+        raise ValueError
     # Sum the commitments to the i-th coefficients for i > 0
     #
     # This procedure corresponds to the one described by Pedersen in Section 5.1

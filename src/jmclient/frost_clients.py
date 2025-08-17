@@ -538,7 +538,7 @@ class DKGClient:
 
             enc_shares = []
             for j in range(enc_shares_len):
-                es = secp256k1.Scalar.from_bytes(b[i:i+32])
+                es = secp256k1.Scalar.from_bytes_checked(b[i:i+32])
                 enc_shares.append(es)
                 i += 32
 
@@ -635,7 +635,7 @@ class DKGClient:
             i += 2
             enc_secshares = []
             for j in range(enc_secshares_len):
-                es = secp256k1.Scalar.from_bytes(b[i:i+32])
+                es = secp256k1.Scalar.from_bytes_checked(b[i:i+32])
                 enc_secshares.append(es)
                 i += 32
 

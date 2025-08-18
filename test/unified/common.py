@@ -50,7 +50,7 @@ async def make_sign_and_push(ins_full,
     output_addr = await wallet_service.get_new_addr(
         1,
         BaseWallet.ADDRESS_TYPE_INTERNAL) if not output_addr else output_addr
-    change_addr = wallet_service.get_new_addr(
+    change_addr = await wallet_service.get_new_addr(
         0,
         BaseWallet.ADDRESS_TYPE_INTERNAL) if not change_addr else change_addr
     fee_est = estimate_tx_fee(len(ins), 2) if estimate_fee else 10000
@@ -135,8 +135,9 @@ async def make_wallets(n,
                 amt = mean_amt - sdev_amt / 2.0 + deviation
                 if amt < 0: amt = 0.001
                 amt = float(Decimal(amt).quantize(Decimal(10)**-8))
-                jm_single().bc_interface.grab_coins(wallet_service.get_new_addr(
-                    j, BaseWallet.ADDRESS_TYPE_INTERNAL), amt)
+                dest_addr = await wallet_service.get_new_addr(
+                    j, BaseWallet.ADDRESS_TYPE_INTERNAL)
+                jm_single().bc_interface.grab_coins(dest_addr , amt)
     return wallets
 
 

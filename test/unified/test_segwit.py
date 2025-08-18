@@ -6,140 +6,153 @@ from common import make_wallets
 from pprint import pformat
 import jmbitcoin as btc
 import pytest
+from unittest_parametrize import parametrize, ParametrizedTestCase
 from jmbase import get_log, hextobin
 from jmclient import load_test_config, jm_single, LegacyWallet, BaseWallet
+
+
+from common import TrialAsyncioTestCase
+
+pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
+
 log = get_log()
 
 
-def test_segwit_valid_txs(setup_segwit):
-    with open("test/tx_segwit_valid.json", "r") as f:
-        json_data = f.read()
-    valid_txs = json.loads(json_data)
-    for j in valid_txs:
-        if len(j) < 2:
-            continue
-        deserialized_tx = btc.CMutableTransaction.deserialize(hextobin(j[1]))
-        print(pformat(deserialized_tx))
-        assert deserialized_tx.serialize() == hextobin(j[1])
-        #TODO use bcinterface to decoderawtransaction
-        #and compare the json values
+class SegWitTests(TrialAsyncioTestCase, ParametrizedTestCase):
 
-@pytest.mark.parametrize(
-    "wallet_structure, in_amt, amount, segwit_amt, segwit_ins, o_ins", [
-        ([[1, 0, 0, 0, 0]], 1, 1000000, 1, [0, 1, 2], []),
-        ([[4, 0, 0, 0, 1]], 3, 100000000, 1, [0, 2], [1, 3]),
-        ([[4, 0, 0, 0, 1]], 3, 100000000, 1, [0, 5], [1, 2, 3, 4]),
-        ([[4, 0, 0, 0, 0]], 2, 200000007, 0.3, [0, 1, 4, 5], [2, 3, 6]),
-    ])
-def test_spend_p2sh_p2wpkh_multi(setup_segwit, wallet_structure, in_amt, amount,
-                                 segwit_amt, segwit_ins, o_ins):
-    """Creates a wallet from which non-segwit inputs/
-    outputs can be created, constructs one or more
-    p2wpkh in p2sh spendable utxos (by paying into the
-    corresponding address) and tests spending them
-    in combination.
-    wallet_structure is in accordance with commontest.make_wallets, see docs there
-    in_amt is the amount to pay into each address into the wallet (non-segwit adds)
-    amount (in satoshis) is how much we will pay to the output address
-    segwit_amt in BTC is the amount we will fund each new segwit address with
-    segwit_ins is a list of input indices (where to place the funding segwit utxos)
-    other_ins is a list of input indices (where to place the funding non-sw utxos)
-    """
-    MIXDEPTH = 0
+    async def asyncSetUp(self):
+        load_test_config()
+        jm_single().bc_interface.tick_forward_chain_interval = 1
 
-    # set up wallets and inputs
-    nsw_wallet_service = make_wallets(1, wallet_structure, in_amt,
-                              walletclass=LegacyWallet)[0]['wallet']
-    nsw_wallet_service.sync_wallet(fast=True)
-    sw_wallet_service = make_wallets(1, [[len(segwit_ins), 0, 0, 0, 0]], segwit_amt)[0]['wallet']
-    sw_wallet_service.sync_wallet(fast=True)
+    async def test_segwit_valid_txs(self):
+        with open("test/tx_segwit_valid.json", "r") as f:
+            json_data = f.read()
+        valid_txs = json.loads(json_data)
+        for j in valid_txs:
+            if len(j) < 2:
+                continue
+            deserialized_tx = btc.CMutableTransaction.deserialize(hextobin(j[1]))
+            print(pformat(deserialized_tx))
+            assert deserialized_tx.serialize() == hextobin(j[1])
+            #TODO use bcinterface to decoderawtransaction
+            #and compare the json values
 
-    nsw_utxos = nsw_wallet_service.get_utxos_by_mixdepth()[MIXDEPTH]
-    sw_utxos = sw_wallet_service.get_utxos_by_mixdepth()[MIXDEPTH]
-    assert len(o_ins) <= len(nsw_utxos), "sync failed"
-    assert len(segwit_ins) <= len(sw_utxos), "sync failed"
+    @parametrize(
+        "wallet_structure, in_amt, amount, segwit_amt, segwit_ins, o_ins", [
+            ([[1, 0, 0, 0, 0]], 1, 1000000, 1, [0, 1, 2], []),
+            ([[4, 0, 0, 0, 1]], 3, 100000000, 1, [0, 2], [1, 3]),
+            ([[4, 0, 0, 0, 1]], 3, 100000000, 1, [0, 5], [1, 2, 3, 4]),
+            ([[4, 0, 0, 0, 0]], 2, 200000007, 0.3, [0, 1, 4, 5], [2, 3, 6]),
+        ])
+    async def test_spend_p2sh_p2wpkh_multi(self, wallet_structure, in_amt, amount,
+                                     segwit_amt, segwit_ins, o_ins):
+        """Creates a wallet from which non-segwit inputs/
+        outputs can be created, constructs one or more
+        p2wpkh in p2sh spendable utxos (by paying into the
+        corresponding address) and tests spending them
+        in combination.
+        wallet_structure is in accordance with commontest.make_wallets, see docs there
+        in_amt is the amount to pay into each address into the wallet (non-segwit adds)
+        amount (in satoshis) is how much we will pay to the output address
+        segwit_amt in BTC is the amount we will fund each new segwit address with
+        segwit_ins is a list of input indices (where to place the funding segwit utxos)
+        other_ins is a list of input indices (where to place the funding non-sw utxos)
+        """
+        MIXDEPTH = 0
 
-    total_amt_in_sat = 0
+        # set up wallets and inputs
+        wallet_services = await make_wallets(
+            1, wallet_structure, in_amt, walletclass=LegacyWallet)
+        nsw_wallet_service = wallet_services[0]['wallet']
+        await nsw_wallet_service.sync_wallet(fast=True)
+        sw_wallet_services = await make_wallets(
+            1, [[len(segwit_ins), 0, 0, 0, 0]], segwit_amt)
+        sw_wallet_service = sw_wallet_services[0]['wallet']
+        await sw_wallet_service.sync_wallet(fast=True)
 
-    nsw_ins = {}
-    for nsw_in_index in o_ins:
-        total_amt_in_sat += in_amt * 10**8
-        nsw_ins[nsw_in_index] = nsw_utxos.popitem()
+        nsw_utxos_by_md = await nsw_wallet_service.get_utxos_by_mixdepth()
+        nsw_utxos = nsw_utxos_by_md[MIXDEPTH]
+        sw_utxos_by_md = await sw_wallet_service.get_utxos_by_mixdepth()
+        sw_utxos = sw_utxos_by_md[MIXDEPTH]
+        assert len(o_ins) <= len(nsw_utxos), "sync failed"
+        assert len(segwit_ins) <= len(sw_utxos), "sync failed"
 
-    sw_ins = {}
-    for sw_in_index in segwit_ins:
-        total_amt_in_sat += int(segwit_amt * 10**8)
-        sw_ins[sw_in_index] = sw_utxos.popitem()
+        total_amt_in_sat = 0
 
-    all_ins = {}
-    all_ins.update(nsw_ins)
-    all_ins.update(sw_ins)
+        nsw_ins = {}
+        for nsw_in_index in o_ins:
+            total_amt_in_sat += in_amt * 10**8
+            nsw_ins[nsw_in_index] = nsw_utxos.popitem()
 
-    # sanity checks
-    assert len(all_ins) == len(nsw_ins) + len(sw_ins), \
-        "test broken, duplicate index"
-    for k in all_ins:
-        assert 0 <= k < len(all_ins), "test broken, missing input index"
+        sw_ins = {}
+        for sw_in_index in segwit_ins:
+            total_amt_in_sat += int(segwit_amt * 10**8)
+            sw_ins[sw_in_index] = sw_utxos.popitem()
 
-    # FIXME: encoding mess, mktx should accept binary input formats
-    tx_ins = []
-    for i, (txin, data) in sorted(all_ins.items(), key=lambda x: x[0]):
-        tx_ins.append(txin)
+        all_ins = {}
+        all_ins.update(nsw_ins)
+        all_ins.update(sw_ins)
 
-    # create outputs
-    FEE = 50000
-    assert FEE < total_amt_in_sat - amount, "test broken, not enough funds"
+        # sanity checks
+        assert len(all_ins) == len(nsw_ins) + len(sw_ins), \
+            "test broken, duplicate index"
+        for k in all_ins:
+            assert 0 <= k < len(all_ins), "test broken, missing input index"
 
-    cj_script = nsw_wallet_service.get_new_script(MIXDEPTH + 1,
-                                BaseWallet.ADDRESS_TYPE_INTERNAL)
-    change_script = nsw_wallet_service.get_new_script(MIXDEPTH,
-                                BaseWallet.ADDRESS_TYPE_INTERNAL)
-    change_amt = total_amt_in_sat - amount - FEE
+        # FIXME: encoding mess, mktx should accept binary input formats
+        tx_ins = []
+        for i, (txin, data) in sorted(all_ins.items(), key=lambda x: x[0]):
+            tx_ins.append(txin)
 
-    tx_outs = [
-        {'address': nsw_wallet_service.script_to_addr(cj_script),
-         'value': amount},
-        {'address': nsw_wallet_service.script_to_addr(change_script),
-         'value': change_amt}]
-    tx = btc.mktx(tx_ins, tx_outs)
+        # create outputs
+        FEE = 50000
+        assert FEE < total_amt_in_sat - amount, "test broken, not enough funds"
 
-    # import new addresses to bitcoind
-    jm_single().bc_interface.import_addresses(
-        [nsw_wallet_service.script_to_addr(x)
-         for x in [cj_script, change_script]], nsw_wallet_service.get_wallet_name())
+        cj_script = await nsw_wallet_service.get_new_script(
+            MIXDEPTH + 1, BaseWallet.ADDRESS_TYPE_INTERNAL)
+        change_script = await nsw_wallet_service.get_new_script(
+            MIXDEPTH, BaseWallet.ADDRESS_TYPE_INTERNAL)
+        change_amt = total_amt_in_sat - amount - FEE
 
-    # sign tx
-    scripts = {}
-    for nsw_in_index in o_ins:
-        inp = nsw_ins[nsw_in_index][1]
-        scripts[nsw_in_index] = (inp['script'], inp['value'])
-    success, msg = nsw_wallet_service.sign_tx(tx, scripts)
-    assert success, msg
+        tx_outs = [
+            {'address': await nsw_wallet_service.script_to_addr(cj_script),
+             'value': amount},
+            {'address': await nsw_wallet_service.script_to_addr(change_script),
+             'value': change_amt}]
+        tx = btc.mktx(tx_ins, tx_outs)
 
-    scripts = {}
-    for sw_in_index in segwit_ins:
-        inp = sw_ins[sw_in_index][1]
-        scripts[sw_in_index] = (inp['script'], inp['value'])
-    success, msg = sw_wallet_service.sign_tx(tx, scripts)
-    assert success, msg
+        # import new addresses to bitcoind
+        jm_single().bc_interface.import_addresses(
+            [(await nsw_wallet_service.script_to_addr(x))
+             for x in [cj_script, change_script]],
+            nsw_wallet_service.get_wallet_name())
 
-    print(tx)
+        # sign tx
+        scripts = {}
+        for nsw_in_index in o_ins:
+            inp = nsw_ins[nsw_in_index][1]
+            scripts[nsw_in_index] = (inp['script'], inp['value'])
+        success, msg = await nsw_wallet_service.sign_tx(tx, scripts)
+        assert success, msg
 
-    # push and verify
-    txid = jm_single().bc_interface.pushtx(tx.serialize())
-    assert txid
+        scripts = {}
+        for sw_in_index in segwit_ins:
+            inp = sw_ins[sw_in_index][1]
+            scripts[sw_in_index] = (inp['script'], inp['value'])
+        success, msg = await sw_wallet_service.sign_tx(tx, scripts)
+        assert success, msg
 
-    balances = jm_single().bc_interface.get_received_by_addr(
-        [nsw_wallet_service.script_to_addr(cj_script),
-         nsw_wallet_service.script_to_addr(change_script)])['data']
-    assert balances[0]['balance'] == amount
-    assert balances[1]['balance'] == change_amt
+        print(tx)
 
+        # push and verify
+        txid = jm_single().bc_interface.pushtx(tx.serialize())
+        assert txid
 
-@pytest.fixture(scope="module")
-def setup_segwit():
-    load_test_config()
-    jm_single().bc_interface.tick_forward_chain_interval = 1
+        balances = jm_single().bc_interface.get_received_by_addr(
+            [(await nsw_wallet_service.script_to_addr(cj_script)),
+             (await nsw_wallet_service.script_to_addr(change_script))])['data']
+        assert balances[0]['balance'] == amount
+        assert balances[1]['balance'] == change_amt
 
 
 '''

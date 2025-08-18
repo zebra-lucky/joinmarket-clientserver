@@ -10,6 +10,9 @@ from decimal import Decimal
 data_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(data_dir))
 
+from unittest import IsolatedAsyncioTestCase
+from twisted.trial.unittest import TestCase as TrialTestCase
+
 from jmbase import get_log
 from jmclient import open_test_wallet_maybe, BIP32Wallet, SegwitWallet, \
     estimate_tx_fee, jm_single, WalletService, BaseWallet, WALLET_IMPLEMENTATIONS
@@ -19,13 +22,24 @@ from jmbase import chunks
 
 log = get_log()
 
-def make_sign_and_push(ins_full,
-                       wallet_service,
-                       amount,
-                       output_addr=None,
-                       change_addr=None,
-                       hashcode=btc.SIGHASH_ALL,
-                       estimate_fee = False):
+
+class TrialAsyncioTestCase(TrialTestCase, IsolatedAsyncioTestCase):
+
+    def __init__(self, methodName='runTest'):
+        IsolatedAsyncioTestCase.__init__(self, methodName)
+        TrialTestCase.__init__(self, methodName)
+
+    def __call__(self, *args, **kwds):
+        return IsolatedAsyncioTestCase.run(self, *args, **kwds)
+
+
+async def make_sign_and_push(ins_full,
+                             wallet_service,
+                             amount,
+                             output_addr=None,
+                             change_addr=None,
+                             hashcode=btc.SIGHASH_ALL,
+                             estimate_fee = False):
     """Utility function for easily building transactions
     from wallets.
     """
@@ -33,8 +47,12 @@ def make_sign_and_push(ins_full,
     total = sum(x['value'] for x in ins_full.values())
     ins = ins_full.keys()
     #random output address and change addr
-    output_addr = wallet_service.get_new_addr(1, BaseWallet.ADDRESS_TYPE_INTERNAL) if not output_addr else output_addr
-    change_addr = wallet_service.get_new_addr(0, BaseWallet.ADDRESS_TYPE_INTERNAL) if not change_addr else change_addr
+    output_addr = await wallet_service.get_new_addr(
+        1,
+        BaseWallet.ADDRESS_TYPE_INTERNAL) if not output_addr else output_addr
+    change_addr = wallet_service.get_new_addr(
+        0,
+        BaseWallet.ADDRESS_TYPE_INTERNAL) if not change_addr else change_addr
     fee_est = estimate_tx_fee(len(ins), 2) if estimate_fee else 10000
     outs = [{'value': amount,
              'address': output_addr}, {'value': total - amount - fee_est,
@@ -57,17 +75,17 @@ def make_sign_and_push(ins_full,
     else:
         return False
 
-def make_wallets(n,
-                 wallet_structures=None,
-                 mean_amt=1,
-                 sdev_amt=0,
-                 start_index=0,
-                 fixed_seeds=None,
-                 test_wallet=False,
-                 passwords=None,
-                 walletclass=SegwitWallet,
-                 mixdepths=5,
-                 fb_indices=[]):
+async def make_wallets(n,
+                       wallet_structures=None,
+                       mean_amt=1,
+                       sdev_amt=0,
+                       start_index=0,
+                       fixed_seeds=None,
+                       test_wallet=False,
+                       passwords=None,
+                       walletclass=SegwitWallet,
+                       mixdepths=5,
+                       fb_indices=[]):
     '''n: number of wallets to be created
        wallet_structure: array of n arrays , each subarray
        specifying the number of addresses to be populated with coins
@@ -105,8 +123,8 @@ def make_wallets(n,
             print("for index: {}, we got wallet type: {}".format(i, wc))
         else:
             wc = walletclass
-        w = open_test_wallet_maybe(seeds[i], seeds[i], mixdepths - 1,
-                                   test_wallet_cls=wc)
+        w = await open_test_wallet_maybe(seeds[i], seeds[i], mixdepths - 1,
+                                         test_wallet_cls=wc)
 
         wallet_service = WalletService(w)
         wallets[i + start_index] = {'seed': seeds[i].decode('ascii'),

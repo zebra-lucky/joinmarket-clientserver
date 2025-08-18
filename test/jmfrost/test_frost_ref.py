@@ -68,9 +68,14 @@ def generate_frost_keys(max_participants: int, min_participants: int) -> Tuple[P
     return (group_pk, identifiers, ser_secshares, ser_pubshares)
 
 # REVIEW we might not need this vectors, as `check_pubshares_correctness`
+
+def module_based_path(vectors_fname):
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(module_dir, 'vectors', vectors_fname)
+
 # can't be implemented securely (they need secshares!!).
 def test_keygen_vectors():
-    with open(os.path.join(sys.path[0], 'vectors', 'keygen_vectors.json')) as f:
+    with open(module_based_path('keygen_vectors.json')) as f:
         test_data = json.load(f)
 
     valid_test_cases = test_data["valid_test_cases"]
@@ -104,7 +109,7 @@ def test_keygen_vectors():
         assert check_group_pubkey_correctness(min_participants, group_pk, ids, pubshares) == False
 
 def test_nonce_gen_vectors():
-    with open(os.path.join(sys.path[0], 'vectors', 'nonce_gen_vectors.json')) as f:
+    with open(module_based_path('nonce_gen_vectors.json')) as f:
         test_data = json.load(f)
 
     for test_case in test_data["test_cases"]:
@@ -133,7 +138,7 @@ def test_nonce_gen_vectors():
         assert nonce_gen_internal(rand_, secshare, pubshare, group_pk, msg, extra_in) == (expected_secnonce, expected_pubnonce)
 
 def test_nonce_agg_vectors():
-    with open(os.path.join(sys.path[0], 'vectors', 'nonce_agg_vectors.json')) as f:
+    with open(module_based_path('nonce_agg_vectors.json')) as f:
         test_data = json.load(f)
 
     pubnonces_list = fromhex_all(test_data["pubnonces"])
@@ -157,7 +162,7 @@ def test_nonce_agg_vectors():
 # todo: include vectors from the frost draft too
 # todo: add a test where group_pk is even (might need to modify json file)
 def test_sign_verify_vectors():
-    with open(os.path.join(sys.path[0], 'vectors', 'sign_verify_vectors.json')) as f:
+    with open(module_based_path('sign_verify_vectors.json')) as f:
         test_data = json.load(f)
 
     max_participants = test_data["max_participants"]
@@ -242,7 +247,7 @@ def test_sign_verify_vectors():
         assert_raises(exception, lambda: partial_sig_verify(psig, ids_tmp, pubnonces_tmp, pubshares_tmp, [], [], msg, signer_index), except_fn)
 
 def test_tweak_vectors():
-    with open(os.path.join(sys.path[0], 'vectors', 'tweak_vectors.json')) as f:
+    with open(module_based_path('tweak_vectors.json')) as f:
         test_data = json.load(f)
 
     max_participants = test_data["max_participants"]
@@ -307,7 +312,7 @@ def test_tweak_vectors():
         assert_raises(exception, lambda: sign(secnonce_p1, secshare_p1, my_id, session_ctx), except_fn)
 
 def test_det_sign_vectors():
-    with open(os.path.join(sys.path[0], 'vectors', 'det_sign_vectors.json')) as f:
+    with open(module_based_path('det_sign_vectors.json')) as f:
         test_data = json.load(f)
 
     max_participants = test_data["max_participants"]
@@ -361,7 +366,7 @@ def test_det_sign_vectors():
         assert_raises(exception, try_fn, except_fn)
 
 def test_sig_agg_vectors():
-    with open(os.path.join(sys.path[0], 'vectors', 'sig_agg_vectors.json')) as f:
+    with open(module_based_path('sig_agg_vectors.json')) as f:
         test_data = json.load(f)
 
     max_participants = test_data["max_participants"]
@@ -417,7 +422,8 @@ def test_sig_agg_vectors():
         session_ctx = SessionContext(aggnonce_tmp, ids_tmp, pubshares_tmp, tweaks_tmp, tweak_modes_tmp, msg)
         assert_raises(exception, lambda: partial_sig_agg(psigs_tmp, ids_tmp, session_ctx), except_fn)
 
-def test_sign_and_verify_random(iterations: int) -> None:
+def test_sign_and_verify_random() -> None:
+    iterations = 6
     for itr in range(iterations):
         secure_rng = secrets.SystemRandom()
         # randomly choose a number: 2 <= number <= 10

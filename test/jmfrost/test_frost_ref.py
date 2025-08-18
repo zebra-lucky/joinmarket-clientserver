@@ -14,8 +14,9 @@ from jmfrost.frost_ref.reference import (
     check_frost_key_compatibility, check_pubshares_correctness,
     check_group_pubkey_correctness, nonce_gen_internal, AGGREGATOR_ID,
     partial_sig_verify_internal, nonce_gen)
-from jmfrost.frost_ref.utils.bip340 import (
-    schnorr_verify, bytes_from_int, int_from_bytes, point_mul, G, n)
+from jmfrost.secp256k1lab.bip340 import (
+    schnorr_verify, bytes_from_int, int_from_bytes, G)
+from jmfrost.secp256k1lab.secp256k1 import Scalar
 
 from trusted_keygen import trusted_dealer_keygen
 
@@ -39,33 +40,35 @@ def assert_raises(exception, try_fn, except_fn):
 
 def get_error_details(test_case):
     error = test_case["error"]
-    if error["type"] == "invalid_contribution":
+    if error["type"] == "InvalidContributionError":
         exception = InvalidContributionError
         if "contrib" in error:
-            except_fn = lambda e: e.id == error["signer_id"] and e.contrib == error["contrib"]
+            except_fn = lambda e: e.id == error["id"] and e.contrib == error["contrib"]
         else:
-            except_fn = lambda e: e.id == error["signer_id"]
-    elif error["type"] == "value":
+            except_fn = lambda e: e.id == error["id"]
+    elif error["type"] == "ValueError":
         exception = ValueError
-        # except_fn = except_fn1
         except_fn = lambda e: str(e) == error["message"]
     else:
         raise RuntimeError(f"Invalid error type: {error['type']}")
     return exception, except_fn
 
-def generate_frost_keys(max_participants: int, min_participants: int) -> Tuple[PlainPk, List[bytes], List[bytes], List[PlainPk]]:
+def generate_frost_keys(max_participants: int, min_participants: int) -> Tuple[PlainPk, List[int], List[bytes], List[PlainPk]]:
     if not (2 <= min_participants <= max_participants):
         raise ValueError('values must satisfy: 2 <= min_participants <= max_participants')
 
-    secret = secrets.randbelow(n - 1) + 1
+    secret = Scalar.from_bytes_wrapping(secrets.token_bytes(32))
     P, secshares, pubshares = trusted_dealer_keygen(secret, max_participants, min_participants)
 
     group_pk = PlainPk(cbytes(P))
-    ser_identifiers = [bytes_from_int(secshare_i[0]) for secshare_i in secshares]
+    # we need decrement by one, since our identifiers represent integer indices
+    identifiers = [int(secshare_i[0] - 1) for secshare_i in secshares]
     ser_secshares = [bytes_from_int(secshare_i[1]) for secshare_i in secshares]
     ser_pubshares = [PlainPk(cbytes(pubshare_i)) for pubshare_i in pubshares]
-    return (group_pk, ser_identifiers, ser_secshares, ser_pubshares)
+    return (group_pk, identifiers, ser_secshares, ser_pubshares)
 
+# REVIEW we might not need this vectors, as `check_pubshares_correctness`
+# can't be implemented securely (they need secshares!!).
 def test_keygen_vectors():
     with open(os.path.join(sys.path[0], 'vectors', 'keygen_vectors.json')) as f:
         test_data = json.load(f)
@@ -76,7 +79,7 @@ def test_keygen_vectors():
         min_participants = test_case["min_participants"]
         group_pk = bytes.fromhex(test_case["group_public_key"])
         # assert the length using min & max participants?
-        ids = [bytes_from_int(i) for i in test_case["participant_identifiers"]]
+        ids = test_case["participant_identifiers"]
         pubshares = fromhex_all(test_case["participant_pubshares"])
         secshares = fromhex_all(test_case["participant_secshares"])
 
@@ -94,7 +97,7 @@ def test_keygen_vectors():
         max_participants = test_case["max_participants"]
         min_participants = test_case["min_participants"]
         group_pk = bytes.fromhex(test_case["group_public_key"])
-        ids = [bytes_from_int(i) for i in test_case["participant_identifiers"]]
+        ids = test_case["participant_identifiers"]
         pubshares = fromhex_all(test_case["participant_pubshares"])
         secshares = fromhex_all(test_case["participant_secshares"])
 
@@ -141,14 +144,14 @@ def test_nonce_agg_vectors():
         #todo: assert the min_participants <= len(pubnonces, ids) <= max_participants
         #todo: assert the values of ids too? 1 <= id <= max_participants?
         pubnonces = [pubnonces_list[i] for i in test_case["pubnonce_indices"]]
-        ids = [bytes_from_int(i) for i in test_case["participant_identifiers"]]
+        ids = test_case["participant_identifiers"]
         expected_aggnonce = bytes.fromhex(test_case["expected_aggnonce"])
         assert nonce_agg(pubnonces, ids) == expected_aggnonce
 
     for test_case in error_test_cases:
         exception, except_fn = get_error_details(test_case)
         pubnonces = [pubnonces_list[i] for i in test_case["pubnonce_indices"]]
-        ids = [bytes_from_int(i) for i in test_case["participant_identifiers"]]
+        ids = test_case["participant_identifiers"]
         assert_raises(exception, lambda: nonce_agg(pubnonces, ids), except_fn)
 
 # todo: include vectors from the frost draft too
@@ -171,9 +174,9 @@ def test_sign_verify_vectors():
     # The public nonce corresponding to first participant (secnonce_p1[0]) is at index 0
     k_1 = int_from_bytes(secnonces_p1[0][0:32])
     k_2 = int_from_bytes(secnonces_p1[0][32:64])
-    R_s1 = point_mul(G, k_1)
-    R_s2 = point_mul(G, k_2)
-    assert R_s1 is not None and R_s2 is not None
+    R_s1 = k_1 * G
+    R_s2 = k_2 * G
+    assert not R_s1.infinity and not R_s2.infinity
     assert pubnonces[0] == cbytes(R_s1) + cbytes(R_s2)
 
     aggnonces = fromhex_all(test_data["aggnonces"])
@@ -185,7 +188,7 @@ def test_sign_verify_vectors():
     verify_error_test_cases = test_data["verify_error_test_cases"]
 
     for test_case in valid_test_cases:
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         pubnonces_tmp = [pubnonces[i] for i in test_case["pubnonce_indices"]]
         aggnonce_tmp = aggnonces[test_case["aggnonce_index"]]
@@ -206,12 +209,12 @@ def test_sign_verify_vectors():
 
     for test_case in sign_error_test_cases:
         exception, except_fn = get_error_details(test_case)
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         aggnonce_tmp = aggnonces[test_case["aggnonce_index"]]
         msg = msgs[test_case["msg_index"]]
         signer_index = test_case["signer_index"]
-        my_id = bytes_from_int(test_case["signer_id"]) if signer_index is None else ids_tmp[signer_index]
+        my_id = test_case["signer_id"] if signer_index is None else ids_tmp[signer_index]
         secnonce_tmp = bytearray(secnonces_p1[test_case["secnonce_index"]])
 
         session_ctx = SessionContext(aggnonce_tmp, ids_tmp, pubshares_tmp, [], [], msg)
@@ -219,7 +222,7 @@ def test_sign_verify_vectors():
 
     for test_case in verify_fail_test_cases:
         psig = bytes.fromhex(test_case["psig"])
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         pubnonces_tmp = [pubnonces[i] for i in test_case["pubnonce_indices"]]
         msg = msgs[test_case["msg_index"]]
@@ -231,7 +234,7 @@ def test_sign_verify_vectors():
         exception, except_fn = get_error_details(test_case)
 
         psig = bytes.fromhex(test_case["psig"])
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         pubnonces_tmp = [pubnonces[i] for i in test_case["pubnonce_indices"]]
         msg = msgs[test_case["msg_index"]]
@@ -254,11 +257,11 @@ def test_tweak_vectors():
     secnonce_p1 = bytearray(bytes.fromhex(test_data["secnonce_p1"]))
     pubnonces = fromhex_all(test_data["pubnonces"])
     # The public nonce corresponding to first participant (secnonce_p1[0]) is at index 0
-    k_1 = int_from_bytes(secnonce_p1[0:32])
-    k_2 = int_from_bytes(secnonce_p1[32:64])
-    R_s1 = point_mul(G, k_1)
-    R_s2 = point_mul(G, k_2)
-    assert R_s1 is not None and R_s2 is not None
+    k_1 = Scalar.from_bytes_checked(secnonce_p1[0:32])
+    k_2 = Scalar.from_bytes_checked(secnonce_p1[32:64])
+    R_s1 = k_1 * G
+    R_s2 = k_2 * G
+    assert not R_s1.infinity and not R_s2.infinity
     assert pubnonces[0] == cbytes(R_s1) + cbytes(R_s2)
 
     aggnonces = fromhex_all(test_data["aggnonces"])
@@ -270,7 +273,7 @@ def test_tweak_vectors():
     error_test_cases = test_data["error_test_cases"]
 
     for test_case in valid_test_cases:
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         pubnonces_tmp = [pubnonces[i] for i in test_case["pubnonce_indices"]]
         aggnonce_tmp = aggnonces[test_case["aggnonce_index"]]
@@ -292,7 +295,7 @@ def test_tweak_vectors():
 
     for test_case in error_test_cases:
         exception, except_fn = get_error_details(test_case)
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         aggnonce_tmp = aggnonces[test_case["aggnonce_index"]]
         tweaks_tmp = [tweaks[i] for i in test_case["tweak_indices"]]
@@ -319,10 +322,10 @@ def test_det_sign_vectors():
     msgs = fromhex_all(test_data["msgs"])
 
     valid_test_cases = test_data["valid_test_cases"]
-    sign_error_test_cases = test_data["sign_error_test_cases"]
+    error_test_cases = test_data["error_test_cases"]
 
     for test_case in valid_test_cases:
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         aggothernonce = bytes.fromhex(test_case["aggothernonce"])
         tweaks = fromhex_all(test_case["tweaks"])
@@ -342,16 +345,16 @@ def test_det_sign_vectors():
         session_ctx = SessionContext(aggnonce_tmp, ids_tmp, pubshares_tmp, tweaks, is_xonly, msg)
         assert partial_sig_verify_internal(psig, my_id, pubnonce, pubshares_tmp[signer_index], session_ctx)
 
-    for test_case in sign_error_test_cases:
+    for test_case in error_test_cases:
         exception, except_fn = get_error_details(test_case)
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         aggothernonce = bytes.fromhex(test_case["aggothernonce"])
         tweaks = fromhex_all(test_case["tweaks"])
         is_xonly = test_case["is_xonly"]
         msg = msgs[test_case["msg_index"]]
         signer_index = test_case["signer_index"]
-        my_id = bytes_from_int(test_case["signer_id"]) if signer_index is None else ids_tmp[signer_index]
+        my_id = test_case["signer_id"] if signer_index is None else ids_tmp[signer_index]
         rand = bytes.fromhex(test_case["rand"]) if test_case["rand"] is not None else None
 
         try_fn = lambda: deterministic_sign(secshare_p1, my_id, aggothernonce, ids_tmp, pubshares_tmp, tweaks, is_xonly, msg, rand)
@@ -371,14 +374,13 @@ def test_sig_agg_vectors():
     pubnonces = fromhex_all(test_data["pubnonces"])
 
     tweaks = fromhex_all(test_data["tweaks"])
-    psigs = fromhex_all(test_data["psigs"])
     msg = bytes.fromhex(test_data["msg"])
 
     valid_test_cases = test_data["valid_test_cases"]
     error_test_cases = test_data["error_test_cases"]
 
     for test_case in valid_test_cases:
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         pubnonces_tmp = [pubnonces[i] for i in test_case["pubnonce_indices"]]
         aggnonce_tmp = bytes.fromhex(test_case["aggnonce"])
@@ -387,7 +389,7 @@ def test_sig_agg_vectors():
 
         tweaks_tmp = [tweaks[i] for i in test_case["tweak_indices"]]
         tweak_modes_tmp = test_case["is_xonly"]
-        psigs_tmp = [psigs[i] for i in test_case["psig_indices"]]
+        psigs_tmp = fromhex_all(test_case["psigs"])
         expected = bytes.fromhex(test_case["expected"])
 
         session_ctx = SessionContext(aggnonce_tmp, ids_tmp, pubshares_tmp, tweaks_tmp, tweak_modes_tmp, msg)
@@ -403,20 +405,19 @@ def test_sig_agg_vectors():
     for test_case in error_test_cases:
         exception, except_fn = get_error_details(test_case)
 
-        ids_tmp = [bytes_from_int(ids[i]) for i in test_case["id_indices"]]
+        ids_tmp = [ids[i] for i in test_case["id_indices"]]
         pubshares_tmp = [PlainPk(pubshares[i]) for i in test_case["pubshare_indices"]]
         pubnonces_tmp = [pubnonces[i] for i in test_case["pubnonce_indices"]]
         aggnonce_tmp = bytes.fromhex(test_case["aggnonce"])
 
         tweaks_tmp = [tweaks[i] for i in test_case["tweak_indices"]]
         tweak_modes_tmp = test_case["is_xonly"]
-        psigs_tmp = [psigs[i] for i in test_case["psig_indices"]]
+        psigs_tmp = fromhex_all(test_case["psigs"])
 
         session_ctx = SessionContext(aggnonce_tmp, ids_tmp, pubshares_tmp, tweaks_tmp, tweak_modes_tmp, msg)
         assert_raises(exception, lambda: partial_sig_agg(psigs_tmp, ids_tmp, session_ctx), except_fn)
 
-def test_sign_and_verify_random() -> None:
-    iterations = 4
+def test_sign_and_verify_random(iterations: int) -> None:
     for itr in range(iterations):
         secure_rng = secrets.SystemRandom()
         # randomly choose a number: 2 <= number <= 10

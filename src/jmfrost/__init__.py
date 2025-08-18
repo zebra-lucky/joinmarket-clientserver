@@ -13,8 +13,9 @@
 # frost_ref is from
 # https://github.com/siv2r/bip-frost-signing
 #
-# commit 2f249969f84c1533671c521bf864fddecb371018
-# Author: siv2r <siv2ram@gmail.com>
-# Date:   Sat Dec 7 17:13:54 2024 +0530
+#commit f5ea4a5b58c13c234f10b96b620d34e926b49127
+#Merge: a599e50 8b2eaa9
+#Author: Sivaram <siv2ram@gmail.com>
+#Date:   Sat Jun 21 19:59:11 2025 +0530
 #
-#     spec: add header, changelog, and acknowledgements
+#    Merge pull request #23 from theStack/integrate_secp256k1lab

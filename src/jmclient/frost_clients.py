@@ -36,14 +36,14 @@ from jmfrost.chilldkg_ref import simplpedpop
 from jmfrost.chilldkg_ref import vss
 from jmfrost.secp256k1lab import secp256k1
 from jmfrost.frost_ref import reference as frost
-from jmfrost.frost_ref.utils.bip340 import schnorr_verify
+from jmfrost.secp256k1lab.bip340 import schnorr_verify
 
 
 jlog = get_log()
 
 
-def calc_tweak(pubshares, ids_bytes, h=b''):
-    pubkey = frost.derive_group_pubkey(pubshares, ids_bytes)
+def calc_tweak(pubshares, ids, h=b''):
+    pubkey = frost.derive_group_pubkey(pubshares, ids)
     return frost.tagged_hash("TapTweak", pubkey[1:] + h)
 
 
@@ -734,7 +734,7 @@ class FROSTClient(DKGClient):
             self.my_id = None
             for i, p in enumerate(self.hostpubkeys):
                 if p == hostpubkey:
-                    self.my_id = (i+1).to_bytes(32, 'big')
+                    self.my_id = i
                     break
             assert self.my_id is not None, (f'unknown hostpubkey '
                                             f'{hostpubkey.hex()}')
@@ -781,7 +781,7 @@ class FROSTClient(DKGClient):
             self.my_id = None
             for i, p in enumerate(self.hostpubkeys):
                 if p == hostpubkey:
-                    self.my_id = (i+1).to_bytes(32, 'big')
+                    self.my_id = i
                     break
             assert self.my_id is not None
             hostpubkeyhash = sha256(hostpubkey).digest()
@@ -881,13 +881,10 @@ class FROSTClient(DKGClient):
                 if not pub_nonce:
                     continue
                 pub_nonces.append(pub_nonce)
-                ids.append(i+1)
+                ids.append(i)
             coordinator.ids = ids.copy()
-            ids_bytes = []
-            for i in ids:
-                ids_bytes.append(i.to_bytes(32, 'big'))
             assert len(ids) == self.t
-            coordinator.nonce_agg = frost.nonce_agg(pub_nonces, ids_bytes)
+            coordinator.nonce_agg = frost.nonce_agg(pub_nonces, ids)
             jlog.debug('frost_agg1 run')
             return (coordinator.nonce_agg, coordinator.dkg_session_id, ids,
                     coordinator.msg)
@@ -911,18 +908,14 @@ class FROSTClient(DKGClient):
             _pubshares = dkg._dkg_pubshares.get(dkg_session_id)
             pubshares = []
             for i, pubshare in enumerate(_pubshares):
-                if (i+1) not in ids:
+                if i not in ids:
                     continue
                 pubshares.append(pubshare)
-            ids_bytes = []
-            for i in ids:
-                ids_bytes.append(i.to_bytes(32, 'big'))
-
-            tweak = calc_tweak(pubshares, ids_bytes)
+            tweak = calc_tweak(pubshares, ids)
             tweaks = [tweak]
             is_xonly = [True]
             session_ctx = frost.SessionContext(
-                nonce_agg, ids_bytes, pubshares, tweaks, is_xonly, msg)
+                nonce_agg, ids, pubshares, tweaks, is_xonly, msg)
             session.partial_sig = partial_sig = frost.sign(
                 session.sec_nonce, secshare, self.my_id, session_ctx)
             jlog.debug('frost_round2 run')
@@ -965,18 +958,16 @@ class FROSTClient(DKGClient):
                     raise Exception(f'pubshares not found for '
                                     f'{dkg_session_id.hex()}')
                 ids = coordinator.ids
-                ids_bytes = []
                 pubshares = []
                 for i, pubshare in enumerate(_pubshares):
-                    if (i+1) not in ids:
+                    if i not in ids:
                         continue
                     pubshares.append(pubshare)
-                    ids_bytes.append((i+1).to_bytes(32, 'big'))
-                tweak = calc_tweak(pubshares, ids_bytes)
+                tweak = calc_tweak(pubshares, ids)
                 tweaks = [tweak]
                 is_xonly = [True]
                 session_ctx = frost.SessionContext(
-                    coordinator.nonce_agg, ids_bytes, pubshares, tweaks,
+                    coordinator.nonce_agg, ids, pubshares, tweaks,
                     is_xonly, coordinator.msg)
                 partial_sigs = []
                 for pubkey in self.hostpubkeys:
@@ -986,9 +977,9 @@ class FROSTClient(DKGClient):
                     if 'partial_sig' in session:
                         partial_sigs.append(session['partial_sig'])
                 sig = frost.partial_sig_agg(
-                    partial_sigs, ids_bytes, session_ctx)
+                    partial_sigs, ids, session_ctx)
                 tweak_ctx = frost.group_pubkey_and_tweak(
-                    pubshares, ids_bytes, tweaks, is_xonly)
+                    pubshares, ids, tweaks, is_xonly)
                 Q , _, _ = tweak_ctx
                 tweaked_pubkey = frost.xbytes(Q)
                 if not schnorr_verify(coordinator.msg, tweaked_pubkey, sig):

@@ -801,7 +801,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         assert ready_list == set([self.nick2])
         assert nonce_agg and len(nonce_agg)== 66
         assert dkg_session_id and dkg_session_id == self.dkg_session_id
-        assert ids == [1, 2]
+        assert ids == [0, 1]
         assert msg and len(msg) == 32 and msg == msg_bytes
 
         # miminum pub_nonce set already presented, ignoring additional
@@ -870,7 +870,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         ) = self.fc1.frost_agg1(session_id)
         assert nonce_agg and len(nonce_agg)== 66
         assert dkg_session_id and dkg_session_id == self.dkg_session_id
-        assert ids == [1, 2]
+        assert ids == [0, 1]
         assert msg and len(msg) == 32 and msg == msg_bytes
 
     def test_frost_round2(self):

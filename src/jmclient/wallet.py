@@ -589,13 +589,12 @@ class DKGManager:
         if save_dkg:
             self.save()
 
-    async def dkg_recover(self, dkgrec_path):
-        rec_storage = DKGRecoveryStorage(
-            dkgrec_path, create=False, read_only=True)
-        rec_dkg = rec_storage.data[self.RECOVERY_STORAGE_KEY]
+    def dkg_recover(self, dkgrec_storage):
+        rec_dkg = dkgrec_storage.data[self.RECOVERY_STORAGE_KEY]
         privkey = self.wallet._hostseckey
         wallet_rec_dkg = self.recovery_storage.data[self.RECOVERY_STORAGE_KEY]
-        jlog.info(f'Found {len(rec_dkg)} records in the {dkgrec_path}')
+        jlog.info(f'Found {len(rec_dkg)} records in the'
+                  f' {dkgrec_storage.path}')
         for session_id, (ext_recovery, recovery_data) in rec_dkg.items():
             jlog.info(f'Processing session_id {session_id.hex()}')
             try:
@@ -621,7 +620,7 @@ class DKGManager:
             self._dkg_hostpubkeys[session_id] = session_params.hostpubkeys
             self._dkg_t[session_id] = session_params.t
 
-            wallet_rec_dkg[session_id] = (ext_recovery, recovery_data)
+            wallet_rec_dkg[session_id] = [ext_recovery, recovery_data]
 
         self.save()
 
@@ -2966,6 +2965,7 @@ class LegacyWallet(ImportWalletMixin, PSBTWalletMixin, BIP32Wallet):
     def _get_bip32_base_path(self):
         return self._key_ident, 0
 
+
 class BIP32PurposedWallet(BIP32Wallet):
     """ A class to encapsulate cases like
     BIP44, 49 and 84, all of which are derivatives
@@ -2987,6 +2987,7 @@ class BIP32PurposedWallet(BIP32Wallet):
             raise WalletInvalidPath(path)
 
         return path[len(self._get_bip32_base_path())] - 2**31
+
 
 class FidelityBondMixin(object):
     BIP32_TIMELOCK_ID = 2

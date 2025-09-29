@@ -1958,7 +1958,9 @@ async def wallet_tool_main(wallet_root_path):
         if not isinstance(wallet, FrostWallet):
             return 'Command "dkgrecover" used only for FROST wallets'
         dkgrec_path = args[2]
-        return await wallet_service.dkg.dkg_recover(dkgrec_path)
+        dkgrec_storage = DKGRecoveryStorage(
+            dkgrec_path, create=False, read_only=True)
+        return wallet_service.dkg.dkg_recover(dkgrec_storage)
     elif method == "dkgls":
         if not isinstance(wallet, FrostWallet):
             return 'Command "dkgls" used only for FROST wallets'

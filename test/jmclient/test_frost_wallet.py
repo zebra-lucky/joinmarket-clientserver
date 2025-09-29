@@ -15,11 +15,12 @@ import jmbitcoin as btc
 from jmbase import get_log
 from jmclient import (
     load_test_config, jm_single, VolatileStorage, get_network, cryptoengine,
-    create_wallet, open_test_wallet_maybe, FrostWallet, DKGManager)
+    create_wallet, open_test_wallet_maybe, FrostWallet, DKGManager,
+    WalletService)
 
 from jmfrost.chilldkg_ref.chilldkg import DKGOutput, hostpubkey_gen
 from jmclient.frost_clients import (
-    serialize_ext_recovery, decrypt_ext_recovery)
+    serialize_ext_recovery, decrypt_ext_recovery, DKGClient)
 
 pytestmark = pytest.mark.usefixtures("setup_regtest_frost_bitcoind")
 
@@ -28,12 +29,12 @@ test_create_wallet_filename = "frost_testwallet_for_create_wallet_test"
 log = get_log()
 
 
-async def get_populated_wallet():
+async def get_populated_wallet(entropy=None):
     storage = VolatileStorage()
     dkg_storage = VolatileStorage()
     recovery_storage = VolatileStorage()
     FrostWallet.initialize(storage, dkg_storage, recovery_storage,
-                           get_network())
+                           get_network(), entropy=entropy)
     wallet = FrostWallet(storage, dkg_storage, recovery_storage)
     await wallet.async_init(storage)
     return wallet
@@ -325,7 +326,86 @@ class AsyncioTestCase(IsolatedAsyncioTestCase):
         assert wlt.dkg.find_dkg_pubkey(0, 0, 1) is None
 
     async def test_dkg_recover(self):
-        assert 0  # FIXME need to add test
+        entropy1 = bytes.fromhex('8e5e5677fb302874a607b63ad03ba434')
+        entropy2 = bytes.fromhex('38dfa80fbb21b32b2b2740e00a47de9d')
+        entropy3 = bytes.fromhex('3ad9c77fcd1d537b6ef396952d1221a0')
+        wlt1 = await get_populated_wallet(entropy1)
+        hostpubkey1 = hostpubkey_gen(wlt1._hostseckey[:32])
+        wlt_svc1 = WalletService(wlt1)
+        wlt2 = await get_populated_wallet(entropy2)
+        hostpubkey2 = hostpubkey_gen(wlt2._hostseckey[:32])
+        wlt_svc2 = WalletService(wlt2)
+        wlt3 = await get_populated_wallet(entropy3)
+        hostpubkey3 = hostpubkey_gen(wlt3._hostseckey[:32])
+        wlt_svc3 = WalletService(wlt3)
+        nick1, nick2, nick3, nick4 = [
+            'nick1', 'nick2', 'nick3', 'nick4'
+        ]
+
+
+        dkgc1 = DKGClient(wlt_svc1)
+        dkgc2 = DKGClient(wlt_svc2)
+        dkgc3 = DKGClient(wlt_svc3)
+        hostpubkeyhash_hex, session_id, sig_hex = dkgc1.dkg_init(0, 0, 0)
+
+        (
+            nick1,
+            hostpubkeyhash2_hex,
+            session_id2_hex,
+            sig2_hex,
+            pmsg1_2
+        ) = dkgc2.on_dkg_init(
+            nick1, hostpubkeyhash_hex, session_id, sig_hex)
+        pmsg1_2 = dkgc2.deserialize_pmsg1(pmsg1_2)
+
+        (
+            nick1,
+            hostpubkeyhash3_hex,
+            session_id3_hex,
+            sig3_hex,
+            pmsg1_3
+        ) = dkgc3.on_dkg_init(
+            nick1, hostpubkeyhash_hex, session_id, sig_hex)
+        pmsg1_3 = dkgc2.deserialize_pmsg1(pmsg1_3)
+
+        ready_list, cmsg1 = dkgc1.on_dkg_pmsg1(
+            nick2, hostpubkeyhash2_hex, session_id, sig2_hex, pmsg1_2)
+        ready_list, cmsg1 = dkgc1.on_dkg_pmsg1(
+            nick3, hostpubkeyhash3_hex, session_id, sig3_hex, pmsg1_3)
+        cmsg1 = dkgc1.deserialize_cmsg1(cmsg1)
+
+        pmsg2_2 = dkgc2.party_step2(session_id, cmsg1)
+        pmsg2_2 = dkgc2.deserialize_pmsg2(pmsg2_2)
+        pmsg2_3 = dkgc3.party_step2(session_id, cmsg1)
+        pmsg2_3 = dkgc3.deserialize_pmsg2(pmsg2_3)
+
+        ready_list, cmsg2, ext_recovery = dkgc1.on_dkg_pmsg2(
+            nick2, session_id, pmsg2_2)
+        ready_list, cmsg2, ext_recovery = dkgc1.on_dkg_pmsg2(
+            nick3, session_id, pmsg2_3)
+        cmsg2 = dkgc3.deserialize_cmsg2(cmsg2)
+
+        assert dkgc2.finalize(session_id, cmsg2, ext_recovery)
+        assert dkgc3.finalize(session_id, cmsg2, ext_recovery)
+
+        assert not dkgc1.on_dkg_finalized(nick2, session_id)
+        assert dkgc1.on_dkg_finalized(nick3, session_id)
+
+        wlt_rec = await get_populated_wallet(entropy1)
+        wlt1._storage.data[b'created'] = wlt_rec._storage.data[b'created']
+        wlt1._dkg_storage.data[b'created'] = \
+            wlt_rec._dkg_storage.data[b'created']
+        wlt1._recovery_storage.data[b'created'] = \
+            wlt_rec._recovery_storage.data[b'created']
+        assert wlt1._storage.data == wlt_rec._storage.data  # empty wallet
+        assert wlt1._dkg_storage.data != wlt_rec._dkg_storage.data
+        assert wlt1._recovery_storage.data != wlt_rec._recovery_storage.data
+
+        wlt_rec.dkg.dkg_recover(wlt1._recovery_storage)
+
+        assert wlt1._storage.data == wlt_rec._storage.data
+        assert wlt1._dkg_storage.data == wlt_rec._dkg_storage.data
+        assert wlt1._recovery_storage.data == wlt_rec._recovery_storage.data
 
     async def test_dkg_ls(self):
         wlt = await get_populated_wallet()

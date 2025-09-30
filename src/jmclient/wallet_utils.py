@@ -33,8 +33,10 @@ from jmbase.support import (get_password, jmprint, EXIT_FAILURE,
 from jmfrost.chilldkg_ref.chilldkg import hostpubkey_gen
 from .frost_clients import FROSTClient
 from .frost_ipc import FrostIPCServer, FrostIPCClient
-from .cryptoengine import TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WPKH, \
-    TYPE_SEGWIT_WALLET_FIDELITY_BONDS, TYPE_P2TR, TYPE_P2TR_FROST
+from .cryptoengine import (
+    TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WPKH,
+    TYPE_SEGWIT_WALLET_FIDELITY_BONDS, TYPE_P2TR, TYPE_P2TR_FROST,
+    TYPE_TAPROOT_WALLET_FIDELITY_BONDS)
 from .output import fmt_utxo
 import jmbitcoin as btc
 from .descriptor import descsum_create
@@ -1495,7 +1497,7 @@ def get_configured_wallet_type(support_fidelity_bonds):
     if is_frost_mode():
         return TYPE_P2TR_FROST
     if is_taproot_mode():
-        return TYPE_P2TR
+        configured_type = TYPE_P2TR
     elif is_segwit_mode():
         if is_native_segwit_mode():
             configured_type = TYPE_P2WPKH
@@ -1507,6 +1509,8 @@ def get_configured_wallet_type(support_fidelity_bonds):
 
     if configured_type == TYPE_P2WPKH:
         return TYPE_SEGWIT_WALLET_FIDELITY_BONDS
+    elif configured_type == TYPE_P2TR:
+        return TYPE_TAPROOT_WALLET_FIDELITY_BONDS
     else:
         raise ValueError("Fidelity bonds not supported with the configured "
             "options of segwit and native. Edit joinmarket.cfg")

@@ -10,7 +10,6 @@ from twisted.internet import reactor, defer
 from twisted.web.server import Site, NOT_DONE_YET
 from twisted.web.client import readBody
 from twisted.web.http_headers import Headers
-from twisted.trial import unittest
 import urllib.parse as urlparse
 from urllib.parse import urlencode
 

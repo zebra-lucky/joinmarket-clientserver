@@ -30,7 +30,8 @@ from .cryptoengine import TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WSH,\
     TYPE_P2WPKH, TYPE_TIMELOCK_P2WSH, TYPE_SEGWIT_WALLET_FIDELITY_BONDS,\
     TYPE_WATCHONLY_FIDELITY_BONDS, TYPE_WATCHONLY_TIMELOCK_P2WSH, \
     TYPE_WATCHONLY_P2WPKH, TYPE_P2TR, TYPE_P2TR_FROST, ENGINES, \
-    detect_script_type, EngineError, TYPE_TAPROOT_WALLET_FIDELITY_BONDS
+    detect_script_type, EngineError, TYPE_TAPROOT_WALLET_FIDELITY_BONDS, \
+    TYPE_TAPROOT_WATCHONLY_FIDELITY_BONDS, TYPE_WATCHONLY_P2TR
 from .storage import DKGRecoveryStorage
 from .support import get_random_bytes
 from . import mn_encode, mn_decode
@@ -870,7 +871,7 @@ class BaseWallet(object):
         elif self.TYPE == TYPE_P2SH_P2WPKH:
             return 'p2sh-p2wpkh'
         elif self.TYPE in (TYPE_P2TR, TYPE_TAPROOT_WALLET_FIDELITY_BONDS,
-                           TYPE_P2TR_FROST):
+                           TYPE_P2TR_FROST, TYPE_WATCHONLY_P2TR):
             return 'p2tr'
         elif self.TYPE in (TYPE_P2WPKH,
                 TYPE_SEGWIT_WALLET_FIDELITY_BONDS):
@@ -3854,12 +3855,72 @@ class FidelityBondWatchonlyWallet(FidelityBondMixin, BIP84Wallet):
         return pubkey, self._ENGINE
 
 
+class TaprootFidelityBondWatchonlyWallet(FidelityBondMixin, BIP86Wallet):
+    TYPE = TYPE_TAPROOT_WATCHONLY_FIDELITY_BONDS
+    _ENGINE = ENGINES[TYPE_WATCHONLY_P2TR]
+    _TIMELOCK_ENGINE = ENGINES[TYPE_WATCHONLY_TIMELOCK_P2WSH]
+
+    @classmethod
+    def _verify_entropy(cls, ent):
+        return ent[1:4] == b"pub"
+
+    @classmethod
+    def _derive_bip32_master_key(cls, master_entropy):
+        return btc.bip32_deserialize(master_entropy.decode())
+
+    def _get_bip32_export_path(self, mixdepth=None, address_type=None):
+        path = super()._get_bip32_export_path(mixdepth, address_type)
+        return path
+
+    def _get_key_from_path(self, path,
+            validate_cache: bool = False):
+        raise WalletCannotGetPrivateKeyFromWatchOnly()
+
+    async def _get_keypair_from_path(self, path,
+            validate_cache: bool = False):
+        raise WalletCannotGetPrivateKeyFromWatchOnly()
+
+    async def _get_pubkey_from_path(self, path,
+            validate_cache: bool = False):
+        if not self._is_my_bip32_path(path):
+            return await super()._get_pubkey_from_path(path,
+                validate_cache=validate_cache)
+        if self.is_timelocked_path(path):
+            key_path = path[:-1]
+            locktime = path[-1]
+            cache = self._get_cache_for_path(key_path)
+            pubkey = cache.get(b'P')
+            if pubkey is None or validate_cache:
+                new_pubkey = self._TIMELOCK_ENGINE.derive_bip32_privkey(
+                    self._master_key, key_path)
+                if pubkey is None:
+                    cache[b'P'] = pubkey = new_pubkey
+                elif pubkey != new_pubkey:
+                    raise WalletCacheValidationFailed()
+            return (pubkey, locktime), self._TIMELOCK_ENGINE
+        cache = self._get_cache_for_path(path)
+        pubkey = cache.get(b'P')
+        if pubkey is None or validate_cache:
+            new_pubkey = self._ENGINE.derive_bip32_privkey(
+                self._master_key, path)
+            if pubkey is None:
+                cache[b'P'] = pubkey = new_pubkey
+            elif pubkey != new_pubkey:
+                raise WalletCacheValidationFailed()
+        return pubkey, self._ENGINE
+
+
 WALLET_IMPLEMENTATIONS = {
     LegacyWallet.TYPE: LegacyWallet,
     SegwitLegacyWallet.TYPE: SegwitLegacyWallet,
+
     SegwitWallet.TYPE: SegwitWallet,
     SegwitWalletFidelityBonds.TYPE: SegwitWalletFidelityBonds,
     FidelityBondWatchonlyWallet.TYPE: FidelityBondWatchonlyWallet,
+
     TaprootWallet.TYPE: TaprootWallet,
+    TaprootWalletFidelityBonds.TYPE: TaprootWalletFidelityBonds,
+    TaprootFidelityBondWatchonlyWallet.TYPE: TaprootFidelityBondWatchonlyWallet,
+
     FrostWallet.TYPE: FrostWallet,
 }

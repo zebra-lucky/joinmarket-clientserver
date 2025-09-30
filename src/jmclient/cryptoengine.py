@@ -19,7 +19,8 @@ from .configure import get_network, jm_single
 TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WPKH, TYPE_P2SH_M_N, TYPE_TIMELOCK_P2WSH, \
     TYPE_SEGWIT_WALLET_FIDELITY_BONDS, TYPE_WATCHONLY_FIDELITY_BONDS, \
     TYPE_WATCHONLY_TIMELOCK_P2WSH, TYPE_WATCHONLY_P2WPKH, TYPE_P2WSH, \
-    TYPE_P2TR, TYPE_P2TR_FROST, TYPE_TAPROOT_WALLET_FIDELITY_BONDS = range(13)
+    TYPE_P2TR, TYPE_P2TR_FROST, TYPE_TAPROOT_WALLET_FIDELITY_BONDS, \
+    TYPE_TAPROOT_WATCHONLY_FIDELITY_BONDS, TYPE_WATCHONLY_P2TR,  = range(15)
 NET_MAINNET, NET_TESTNET, NET_SIGNET = range(3)
 NET_MAP = {'mainnet': NET_MAINNET, 'testnet': NET_TESTNET,
     'signet': NET_SIGNET}
@@ -504,6 +505,34 @@ class BTC_P2TR(BTCEngine):
                         spent_outputs=spent_outputs)
 
 
+class BTC_Watchonly_P2TR(BTC_P2TR):
+
+    @classmethod
+    def derive_bip32_privkey(cls, master_key, path):
+        return BTC_Watchonly_Timelocked_P2WSH.derive_bip32_privkey(master_key, path)
+
+    @classmethod
+    def privkey_to_wif(cls, privkey_locktime):
+        return BTC_Watchonly_Timelocked_P2WSH.privkey_to_wif(privkey_locktime)
+
+    @staticmethod
+    def privkey_to_pubkey(privkey):
+        #in watchonly wallets there are no privkeys, so functions
+        # like _get_key_from_path() actually return pubkeys and
+        # this function is a noop
+        return privkey
+
+    @classmethod
+    def derive_bip32_pub_export(cls, master_key, path):
+        return super(BTC_Watchonly_P2TR, cls).derive_bip32_pub_export(
+            master_key, BTC_Watchonly_Timelocked_P2WSH.get_watchonly_path(path))
+
+    @classmethod
+    async def sign_transaction(cls, tx, index, privkey, amount,
+                         hashcode=btc.SIGHASH_ALL, **kwargs):
+        raise RuntimeError("Cannot spend from watch-only wallets")
+
+
 class BTC_P2TR_FROST(BTC_P2TR):
 
     @classmethod
@@ -526,11 +555,17 @@ ENGINES = {
     TYPE_P2PKH: BTC_P2PKH,
     TYPE_P2SH_P2WPKH: BTC_P2SH_P2WPKH,
     TYPE_P2WPKH: BTC_P2WPKH,
+
     TYPE_TIMELOCK_P2WSH: BTC_Timelocked_P2WSH,
     TYPE_WATCHONLY_TIMELOCK_P2WSH: BTC_Watchonly_Timelocked_P2WSH,
+
     TYPE_WATCHONLY_P2WPKH: BTC_Watchonly_P2WPKH,
     TYPE_SEGWIT_WALLET_FIDELITY_BONDS: BTC_P2WPKH,
+
     TYPE_P2TR: BTC_P2TR,
-    TYPE_P2TR_FROST: BTC_P2TR_FROST,
+
+    TYPE_WATCHONLY_P2TR: BTC_Watchonly_P2TR,
     TYPE_TAPROOT_WALLET_FIDELITY_BONDS: BTC_P2TR,
+
+    TYPE_P2TR_FROST: BTC_P2TR_FROST,
 }

@@ -21,9 +21,9 @@ from jmclient import (
     load_test_config, jm_single, BaseWallet, BIP32Wallet, VolatileStorage,
     get_network, cryptoengine, WalletError, BIP49Wallet, WalletService,
     TaprootWalletFidelityBonds, create_wallet, open_test_wallet_maybe,
-    open_wallet, FidelityBondMixin, FidelityBondWatchonlyWallet, LegacyWallet,
+    open_wallet, FidelityBondMixin, LegacyWallet,
     wallet_gettimelockaddress, UnknownAddressForLabel, TaprootWallet,
-    get_blockchain_interface_instance)
+    get_blockchain_interface_instance, TaprootFidelityBondWatchonlyWallet)
 from test_blockchaininterface import sync_test_wallet
 from freezegun import freeze_time
 
@@ -998,9 +998,10 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         watchonly_storage = VolatileStorage()
         entropy = FidelityBondMixin.get_xpub_from_fidelity_bond_master_pub_key(
             master_pub_key).encode()
-        FidelityBondWatchonlyWallet.initialize(watchonly_storage, get_network(),
-            entropy=entropy)
-        watchonly_wallet = FidelityBondWatchonlyWallet(watchonly_storage)
+        TaprootFidelityBondWatchonlyWallet.initialize(
+            watchonly_storage, get_network(), entropy=entropy)
+        watchonly_wallet = TaprootFidelityBondWatchonlyWallet(
+            watchonly_storage)
         await watchonly_wallet.async_init(watchonly_storage)
 
         watchonly_scripts = [

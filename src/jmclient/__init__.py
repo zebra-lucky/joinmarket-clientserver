@@ -27,7 +27,8 @@ from .wallet import (Mnemonic, estimate_tx_fee, WalletError, BaseWallet, ImportW
                      FidelityBondWatchonlyWallet, SegwitWalletFidelityBonds,
                      UTXOManager, WALLET_IMPLEMENTATIONS, compute_tx_locktime,
                      UnknownAddressForLabel, TaprootWallet, FrostWallet,
-                     TaprootWalletFidelityBonds, DKGManager)
+                     TaprootWalletFidelityBonds, DKGManager,
+                     TaprootFidelityBondWatchonlyWallet)
 from .storage import (Argon2Hash, Storage, StorageError, RetryableStorageError,
                       StoragePasswordError, VolatileStorage,
                       DKGStorage, DKGRecoveryStorage)

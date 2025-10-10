@@ -391,10 +391,9 @@ class WalletService(Service):
                 for f in self.callbacks["all"]:
                     # note we need no return value as we will never
                     # remove these from the list
-                    if asyncio.iscoroutine(f):
-                        await f(txd, txid)
-                    else:
-                        f(txd, txid)
+                    cb_res = f(txd, txid)
+                    if asyncio.iscoroutine(cb_res):
+                        cb_res = await cb_res
 
             # txid is not always available at the time of callback registration.
             # Migrate any callbacks registered under the provisional key, and
@@ -422,12 +421,11 @@ class WalletService(Service):
                 if confs == 0:
                     callbacks = []
                     for f in self.callbacks["unconfirmed"].pop(txid, []):
-                        if asyncio.iscoroutine(f):
-                            if not await f(txd, txid):
-                                callbacks.append(f)
-                        else:
-                            if not f(txd, txid):
-                                callbacks.append(f)
+                        cb_res = f(txd, txid)
+                        if asyncio.iscoroutine(cb_res):
+                            cb_res = await cb_res
+                        if not cb_res:
+                            callbacks.append(f)
                     if callbacks:
                         self.callbacks["unconfirmed"][txid] = callbacks
                     else:
@@ -440,12 +438,11 @@ class WalletService(Service):
                 elif confs > 0:
                     callbacks = []
                     for f in self.callbacks["confirmed"].pop(txid, []):
-                        if asyncio.iscoroutine(f):
-                            if not await f(txd, txid, confs):
-                                callbacks.append(f)
-                        else:
-                            if not f(txd, txid, confs):
-                                callbacks.append(f)
+                        cb_res = f(txd, txid, confs)
+                        if asyncio.iscoroutine(cb_res):
+                            cb_res = await cb_res
+                        if not cb_res:
+                            callbacks.append(f)
                     if callbacks:
                         self.callbacks["confirmed"][txid] = callbacks
                     else:

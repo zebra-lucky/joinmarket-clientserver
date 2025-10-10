@@ -1390,12 +1390,10 @@ async def wallet_freezeutxo(wallet_service, md,
             info_callback("The mixdepth: " + str(md) + \
                 " contains no utxos to freeze/unfreeze.", "error")
             return "Failed"
-        if asyncio.iscoroutine(display_callback):
-            display_ret = await display_callback(wallet_service,
-                utxos_enabled, utxos_disabled)
-        else:
-            display_ret = display_callback(wallet_service,
-                utxos_enabled, utxos_disabled)
+        display_ret = display_callback(
+            wallet_service, utxos_enabled, utxos_disabled)
+        if asyncio.iscoroutine(display_ret):
+            display_ret = await display_ret
         if display_ret is None:
             break
         if display_ret == "all":

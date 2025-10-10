@@ -184,18 +184,18 @@ class Taker(object):
             return (False,)
         info_cb_res = self.taker_info_callback(
             "INFO", "Received offers from joinmarket pit")
-        if asyncio.iscoroutine(self.taker_info_callback):
-            await info_cb_res
+        if asyncio.iscoroutine(info_cb_res):
+            info_cb_res = await info_cb_res
         #choose the next item in the schedule
         self.schedule_index += 1
         if self.schedule_index == len(self.schedule):
             info_cb_res = self.taker_info_callback(
                 "INFO", "Finished all scheduled transactions")
-            if asyncio.iscoroutine(self.taker_info_callback):
-                await info_cb_res
+            if asyncio.iscoroutine(info_cb_res):
+                info_cb_res = await info_cb_res
             finished_cb_res = self.on_finished_callback(True)
-            if asyncio.iscoroutine(self.on_finished_callback):
-                await finished_cb_res
+            if asyncio.iscoroutine(finished_cb_res):
+                finished_cb_res = await finished_cb_res
             return (False,)
         else:
             #read the settings from the schedule entry
@@ -256,8 +256,8 @@ class Taker(object):
         #choose coins to spend
         info_cb_res = self.taker_info_callback(
             "INFO", "Preparing bitcoin data..")
-        if asyncio.iscoroutine(self.taker_info_callback):
-            await info_cb_res
+        if asyncio.iscoroutine(info_cb_res):
+            info_cb_res = await info_cb_res
         if not await self.prepare_my_bitcoin_data():
             return (False,)
         #Prepare a commitment
@@ -270,18 +270,18 @@ class Taker(object):
                 #(TODO, it's possible for user to dynamically add more coins,
                 #consider if this option means we should stay alive).
                 info_cb_res = self.taker_info_callback("ABORT", errmsg)
-                if asyncio.iscoroutine(self.taker_info_callback):
-                    await info_cb_res
+                if asyncio.iscoroutine(info_cb_res):
+                    info_cb_res = await info_cb_res
                 return ("commitment-failure",)
             else:
                 info_cb_res = self.taker_info_callback("INFO", errmsg)
-                if asyncio.iscoroutine(self.taker_info_callback):
-                    await info_cb_res
+                if asyncio.iscoroutine(info_cb_res):
+                    info_cb_res = await info_cb_res
                 return (False,)
         else:
             info_cb_res = self.taker_info_callback("INFO", errmsg)
-            if asyncio.iscoroutine(self.taker_info_callback):
-                await info_cb_res
+            if asyncio.iscoroutine(info_cb_res):
+               info_cb_res = await info_cb_res
 
         #Initialization has been successful. We must set the nonrespondants
         #now to keep track of what changed when we receive the utxo data
@@ -325,7 +325,7 @@ class Taker(object):
                 accepted = self.filter_orders_callback([self.orderbook,
                                                         self.total_cj_fee],
                                                        self.cjamount)
-                if asyncio.iscoroutine(self.filter_orders_callback):
+                if asyncio.iscoroutine(accepted):
                     accepted = await accepted
                 if accepted == "retry":
                     #Special condition if Taker is "determined to continue"
@@ -361,8 +361,8 @@ class Taker(object):
                 except:
                     info_cb_res = self.taker_info_callback(
                         "ABORT", "Failed to get a change address")
-                    if asyncio.iscoroutine(self.taker_info_callback):
-                        await info_cb_res
+                    if asyncio.iscoroutine(info_cb_res):
+                        info_cb_res = await info_cb_res
                     return False
             #adjust the required amount upwards to anticipate an increase in
             #transaction fees after re-estimation; this is sufficiently conservative
@@ -381,8 +381,8 @@ class Taker(object):
             except Exception as e:
                 info_cb_res = self.taker_info_callback(
                     "ABORT", "Unable to select sufficient coins: " + repr(e))
-                if asyncio.iscoroutine(self.taker_info_callback):
-                    await info_cb_res
+                if asyncio.iscoroutine(info_cb_res):
+                    info_cb_res = await info_cb_res
                 return False
         else:
             #sweep
@@ -423,14 +423,14 @@ class Taker(object):
             if not self.orderbook:
                 info_cb_res = self.taker_info_callback(
                     "ABORT", "Could not find orders to complete transaction")
-                if asyncio.iscoroutine(self.taker_info_callback):
-                    await info_cb_res
+                if asyncio.iscoroutine(info_cb_res):
+                    info_cb_res = await info_cb_res
                 return False
             if self.filter_orders_callback:
                 accepted = self.filter_orders_callback((self.orderbook,
                                                         self.total_cj_fee),
                                                        self.cjamount)
-                if asyncio.iscoroutine(self.filter_orders_callback):
+                if asyncio.iscoroutine(accepted):
                     accepted = await accepted
                 if not accepted:
                     return False
@@ -482,15 +482,15 @@ class Taker(object):
                 "POLICY", "minimum_makers"):
             info_cb_res = self.taker_info_callback(
                 "INFO", "Not enough counterparties, aborting.")
-            if asyncio.iscoroutine(self.taker_info_callback):
-                await info_cb_res
+            if asyncio.iscoroutine(info_cb_res):
+                info_cb_res = await info_cb_res
             return (False,
                     "Not enough counterparties responded to fill, giving up")
 
         info_cb_res = self.taker_info_callback(
             "INFO", "Got all parts, enough to build a tx")
-        if asyncio.iscoroutine(self.taker_info_callback):
-            await info_cb_res
+        if asyncio.iscoroutine(info_cb_res):
+            info_cb_res = await info_cb_res
 
         #The list self.nonrespondants is now reset and
         #used to track return of signatures for phase 2
@@ -583,8 +583,8 @@ class Taker(object):
 
         info_cb_res = self.taker_info_callback(
             "INFO", "Built tx, sending to counterparties.")
-        if asyncio.iscoroutine(self.taker_info_callback):
-            await info_cb_res
+        if asyncio.iscoroutine(info_cb_res):
+            info_cb_res = await info_cb_res
         return (True, list(self.maker_utxo_data.keys()),
                 self.latest_tx.serialize())
 
@@ -846,8 +846,8 @@ class Taker(object):
         jlog.info('all makers have sent their signatures')
         info_cb_res = self.taker_info_callback(
             "INFO", "Transaction is valid, signing..")
-        if asyncio.iscoroutine(self.taker_info_callback):
-            await info_cb_res
+        if asyncio.iscoroutine(info_cb_res):
+            info_cb_res = await info_cb_res
         jlog.debug("schedule item was: " + str(self.schedule[self.schedule_index]))
         return await self.self_sign_and_push()
 
@@ -1001,8 +1001,8 @@ class Taker(object):
                           "node. The transaction is NOT broadcast.")
                 info_cb_res = self.taker_info_callback(
                     "ABORT", warnmsg + "\nSee log for details.")
-                if asyncio.iscoroutine(self.taker_info_callback):
-                    await info_cb_res
+                if asyncio.iscoroutine(info_cb_res):
+                    info_cb_res = await info_cb_res
                 # warning is arguably not correct but it will stand out more:
                 jlog.warn(warnmsg)
                 jlog.info(btc.human_readable_transaction(tx))
@@ -1059,8 +1059,8 @@ class Taker(object):
             pushed = self.push_ourselves()
         if not pushed:
             finished_cb_res = self.on_finished_callback(False, fromtx=True)
-            if asyncio.iscoroutine(self.on_finished_callback):
-                await finished_cb_res
+            if asyncio.iscoroutine(finished_cb_res):
+                finished_cb_res = await finished_cb_res
         else:
             if nick_to_use:
                 return (nick_to_use, self.latest_tx.serialize())
@@ -1084,8 +1084,8 @@ class Taker(object):
         jlog.info("Transaction seen on network, waiting for confirmation")
         #To allow client to mark transaction as "done" (e.g. by persisting state)
         finished_cb_res= self.on_finished_callback(True, fromtx="unconfirmed")
-        if asyncio.iscoroutine(self.on_finished_callback):
-            await finished_cb_res
+        if asyncio.iscoroutine(finished_cb_res):
+            finished_cb_res = await finished_cb_res
         self.waiting_for_conf = True
         confirm_timeout_sec = float(jm_single().config.get(
             "TIMEOUT", "confirm_timeout_hours")) * 3600
@@ -1109,8 +1109,8 @@ class Taker(object):
         waittime = self.schedule[self.schedule_index][4]
         finished_cb_res = self.on_finished_callback(
             True, fromtx=fromtx, waittime=waittime, txdetails=(txd, txid))
-        if asyncio.iscoroutine(self.on_finished_callback):
-            await finished_cb_res
+        if asyncio.iscoroutine(finished_cb_res):
+            finished_cb_res = await finished_cb_res
         return True
 
     def _is_our_input(self, tx_input):

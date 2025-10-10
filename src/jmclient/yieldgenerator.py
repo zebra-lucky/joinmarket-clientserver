@@ -312,10 +312,10 @@ class YieldGeneratorService(Service):
             # we do not catch Exceptions in setup,
             # deliberately; this must be caught and distinguished
             # by whoever started the service.
-            if asyncio.iscoroutine(setup):
-                raise NotImplementedError()  # FIXME
-            else:
-                setup()
+            setup_res = setup()
+            if asyncio.iscoroutine(setup_res):
+                raise Exception('YieldGeneratorService can not have '
+                                'asyncio setup functions')
 
         # TODO genericise to any YG class:
         self.yieldgen = YieldGeneratorBasic(self.wallet_service, self.yg_config)

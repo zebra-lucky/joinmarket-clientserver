@@ -2334,24 +2334,17 @@ class SNICKERWalletMixin(object):
         assert unsigned_index != -1
         # All validation checks passed. We now check whether the
         #transaction is acceptable according to the caller:
-        if asyncio.iscoroutine(acceptance_callback):
-            if not await acceptance_callback(
-                    [utx.vin[unsigned_index]],
-                    [x for i, x in enumerate(utx.vin)
-                     if i != unsigned_index],
-                    [utx.vout[our_output_index]],
-                    [x for i, x in enumerate(utx.vout)
-                     if i != our_output_index]):
-                return None, "Caller rejected transaction for signing."
-        else:
-            if not acceptance_callback(
-                    [utx.vin[unsigned_index]],
-                    [x for i, x in enumerate(utx.vin)
-                     if i != unsigned_index],
-                    [utx.vout[our_output_index]],
-                    [x for i, x in enumerate(utx.vout)
-                     if i != our_output_index]):
-                return None, "Caller rejected transaction for signing."
+        cb_res = acceptance_callback(
+            [utx.vin[unsigned_index]],
+            [x for i, x in enumerate(utx.vin)
+             if i != unsigned_index],
+            [utx.vout[our_output_index]],
+            [x for i, x in enumerate(utx.vout)
+             if i != our_output_index])
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
+        if not cb_res:
+            return None, "Caller rejected transaction for signing."
 
         # Acceptance passed, prepare the deserialized tx for signing by us:
         signresult_and_signedpsbt, err = await self.sign_psbt(

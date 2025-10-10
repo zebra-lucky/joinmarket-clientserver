@@ -143,10 +143,9 @@ class BIP78ClientProtocol(BaseClientProtocol):
 
     @commands.BIP78SenderReceiveProposal.responder
     async def on_BIP78_SENDER_RECEIVE_PROPOSAL(self, psbt):
-        if asyncio.iscoroutine(self.success_callback):
-            await self.success_callback(psbt, self.manager)
-        else:
-            self.success_callback(psbt, self.manager)
+        cb_res = self.success_callback(psbt, self.manager)
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
         return {"accepted": True}
 
     @commands.BIP78SenderReceiveError.responder
@@ -954,8 +953,8 @@ class JMTakerClientProtocol(JMClientProtocol):
             jlog.info("Stall detected. Retrying transaction if possible ...")
             finished_cb_res = self.client.on_finished_callback(
                 False, True, 0.0)
-            if asyncio.iscoroutine(self.client.on_finished_callback):
-                await finished_cb_res
+            if asyncio.iscoroutine(finished_cb_res):
+                finished_cb_res = await finished_cb_res
         else:
             #This shouldn't really happen; if the tx confirmed,
             #the finished callback should already be called.
@@ -1008,8 +1007,8 @@ class JMTakerClientProtocol(JMClientProtocol):
                     # the logic here is the same.
                     finished_cb_res = self.client.on_finished_callback(
                         False, False, 0.0)
-                    if asyncio.iscoroutine(self.client.on_finished_callback):
-                        await finished_cb_res
+                    if asyncio.iscoroutine(finished_cb_res):
+                        finished_cb_res = await finished_cb_res
                 return {'accepted': False}
             else:
                 nick_list, tx = retval[1:]
@@ -1034,16 +1033,16 @@ class JMTakerClientProtocol(JMClientProtocol):
                 #but is not the functionality desired in general (tumbler).
                 finished_cb_res = self.client.on_finished_callback(
                     False, False, 0.0)
-                if asyncio.iscoroutine(self.client.on_finished_callback):
-                    await finished_cb_res
+                if asyncio.iscoroutine(finished_cb_res):
+                    finished_cb_res = await finished_cb_res
             return {'accepted': True}
         elif retval[0] == "commitment-failure":
             #This case occurs if we cannot find any utxos for reasons
             #other than age, which is a permanent failure
             finished_cb_res = self.client.on_finished_callback(
                 False, False, 0.0)
-            if asyncio.iscoroutine(self.client.on_finished_callback):
-                await finished_cb_res
+            if asyncio.iscoroutine(finished_cb_res):
+                finished_cb_res = await finished_cb_res
             return {'accepted': True}
         amt, cmt, rev, foffers = retval[1:]
         d = self.callRemote(commands.JMFill,

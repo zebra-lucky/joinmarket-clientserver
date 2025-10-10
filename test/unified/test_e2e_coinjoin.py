@@ -13,12 +13,19 @@
    --btcpwd=123456abcdef --btcconf=/blah/bitcoin.conf \
    -s test/e2e-coinjoin-test.py
    '''
-from twisted.internet import reactor, defer
+
+import asyncio
+
+import jmclient  # install asyncioreactor
+from twisted.internet import reactor, defer, task
+
 from twisted.web.client import readBody, Headers
-from common import make_wallets
+from twisted import trial
+from common import make_wallets, TrialTestCase
 import pytest
 import json
 from datetime import datetime
+from _pytest.monkeypatch import MonkeyPatch
 from jmbase import (get_nontor_agent, BytesProducer, jmprint,
                     get_log, stop_reactor)
 from jmclient import (YieldGeneratorBasic, load_test_config, jm_single,
@@ -27,7 +34,7 @@ from jmclient import (YieldGeneratorBasic, load_test_config, jm_single,
 import jmclient
 from jmclient.wallet_rpc import api_version_string
 
-pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
+pytestmark = pytest.mark.usefixtures("setup_miniircd", "setup_regtest_bitcoind")
 
 log = get_log()
 
@@ -91,6 +98,7 @@ class RegtestJMClientProtocolFactory(JMClientProtocolFactory):
         hsd = ""
         for c in default_chans:
             if "type" in c and c["type"] == "onion":
+                continue  # disable onion channel FIXME?
                 onion_found = True
                 if c["hidden_service_dir"] != "":
                     hsd = c["hidden_service_dir"]
@@ -166,99 +174,161 @@ class TWalletRPCManager(object):
         yield handler(body)
         return True
 
-def test_start_yg_and_taker_setup(setup_onion_ygrunner):
-    """Set up some wallets, for the ygs and 1 taker.
-    Then start LN and the ygs in the background, then fire
-    a startup of a wallet daemon for the taker who then
-    makes a coinjoin payment.
-    """
-    if jm_single().config.get("POLICY", "native") == "true":
-        walletclass = SegwitWallet
-    else:
-        # TODO add Legacy
-        walletclass = SegwitLegacyWallet
 
-    start_bot_num, end_bot_num = [int(x) for x in jm_single().config.get(
-        "MESSAGING:onion", "regtest_count").split(",")]
-    num_ygs = end_bot_num - start_bot_num
-    # specify the number of wallets and bots of each type:
-    wallet_services = make_wallets(num_ygs + 1,
-                           wallet_structures=[[1, 3, 0, 0, 0]] * (num_ygs + 1),
-                           mean_amt=2.0,
-                           walletclass=walletclass)
-    #the sendpayment bot uses the last wallet in the list
-    wallet_service = wallet_services[end_bot_num - 1]['wallet']
-    jmprint("\n\nTaker wallet seed : " + wallet_services[end_bot_num - 1]['seed'])
-    # for manual audit if necessary, show the maker's wallet seeds
-    # also (note this audit should be automated in future)
-    jmprint("\n\nMaker wallet seeds: ")
-    for i in range(start_bot_num, end_bot_num):
-        jmprint("Maker seed: " + wallet_services[i - 1]['seed'])
-    jmprint("\n")
-    wallet_service.sync_wallet(fast=True)
-    ygclass = YieldGeneratorBasic
+class E2ETCoinjoinTests(TrialTestCase):
 
-    # As per previous note, override non-default command line settings:
-    options = {}
-    for x in ["ordertype", "txfee_contribution", "txfee_contribution_factor",
-              "cjfee_a", "cjfee_r", "cjfee_factor", "minsize", "size_factor"]:
-        options[x] = jm_single().config.get("YIELDGENERATOR", x)
-    ordertype = options["ordertype"]
-    txfee_contribution = int(options["txfee_contribution"])
-    txfee_contribution_factor = float(options["txfee_contribution_factor"])
-    cjfee_factor = float(options["cjfee_factor"])
-    size_factor = float(options["size_factor"])
-    if ordertype == 'reloffer':
-        cjfee_r = options["cjfee_r"]
-        # minimum size is such that you always net profit at least 20%
-        #of the miner fee
-        minsize = max(int(1.2 * txfee_contribution / float(cjfee_r)),
-            int(options["minsize"]))
-        cjfee_a = None
-    elif ordertype == 'absoffer':
-        cjfee_a = int(options["cjfee_a"])
-        minsize = int(options["minsize"])
-        cjfee_r = None
-    else:
-        assert False, "incorrect offertype config for yieldgenerator."
+    def setUp(self):
+        # For quicker testing, restrict the range of timelock
+        # addresses to avoid slow load of multiple bots.
+        self._orig_TIMELOCK_ERA_YEARS = \
+            jmclient.FidelityBondMixin.TIMELOCK_ERA_YEARS
+        self._orig_TIMELOCK_EPOCH_YEAR = \
+            jmclient.FidelityBondMixin.TIMELOCK_EPOCH_YEAR
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(
+            jmclient.FidelityBondMixin, 'TIMELOCK_ERA_YEARS', 2)
+        monkeypatch.setattr(
+            jmclient.FidelityBondMixin, 'TIMELOCK_EPOCH_YEAR',
+            datetime.now().year)
+        # set doubled value of twisted.trial.util.DEFAULT_TIMEOUT_DURATION
+        self._orig_DEFAULT_TIMEOUT_DURATION = \
+            trial.util.DEFAULT_TIMEOUT_DURATION
+        monkeypatch.setattr(
+            trial.util, 'DEFAULT_TIMEOUT_DURATION',
+            self._orig_DEFAULT_TIMEOUT_DURATION*2)
 
-    txtype = wallet_service.get_txtype()
-    if txtype == "p2wpkh":
-        prefix = "sw0"
-    elif txtype == "p2sh-p2wpkh":
-        prefix = "sw"
-    elif txtype == "p2pkh":
-        prefix = ""
-    else:
-        assert False, "Unsupported wallet type for yieldgenerator: " + txtype
+        load_test_config()
+        jm_single().bc_interface.tick_forward_chain_interval = 10
+        jm_single().bc_interface.simulate_blocks()
+        self.mgr = None
 
-    ordertype = prefix + ordertype
+    def tearDown(self):
+        monkeypatch = MonkeyPatch()
+        monkeypatch.setattr(
+            jmclient.FidelityBondMixin, 'TIMELOCK_ERA_YEARS',
+            self._orig_TIMELOCK_ERA_YEARS)
+        monkeypatch.setattr(
+            jmclient.FidelityBondMixin, 'TIMELOCK_EPOCH_YEAR',
+            self._orig_TIMELOCK_EPOCH_YEAR)
+        monkeypatch.setattr(
+            trial.util, 'DEFAULT_TIMEOUT_DURATION',
+            self._orig_DEFAULT_TIMEOUT_DURATION)
+        reactor.disconnectAll()
+        for dc in reactor.getDelayedCalls():
+            dc.cancel()
+        if self.mgr:
+            return self.mgr.stop()
 
-    for i in range(start_bot_num, end_bot_num):
-        cfg = [txfee_contribution, cjfee_a, cjfee_r, ordertype, minsize,
-               txfee_contribution_factor, cjfee_factor, size_factor]
-        wallet_service_yg = wallet_services[i - 1]["wallet"]
+    def test_start_yg_and_taker_setup(self):
+        d = defer.Deferred.fromFuture(
+            asyncio.ensure_future(self._start_yg_and_taker_setup()))
+        return d
 
-        wallet_service_yg.startService()
+    async def _start_yg_and_taker_setup(self):
+        """Set up some wallets, for the ygs and 1 taker.
+        Then start LN and the ygs in the background, then fire
+        a startup of a wallet daemon for the taker who then
+        makes a coinjoin payment.
+        """
+        if jm_single().config.get("POLICY", "native") == "true":
+            walletclass = SegwitWallet
+        else:
+            # TODO add Legacy
+            walletclass = SegwitLegacyWallet
 
-        yg = ygclass(wallet_service_yg, cfg)
-        clientfactory = RegtestJMClientProtocolFactory(yg, proto_type="MAKER")
-        # This ensures that the right rpc/port config is passed into the daemon,
-        # for this specific bot:
-        clientfactory.i = i
-        # This ensures that this bot knows which other bots are directory nodes:
-        clientfactory.set_directory_nodes(directory_node_indices)
-        nodaemon = jm_single().config.getint("DAEMON", "no_daemon")
-        daemon = bool(nodaemon)
-        #rs = True if i == num_ygs - 1 else False
-        start_reactor(jm_single().config.get("DAEMON", "daemon_host"),
-                      jm_single().config.getint("DAEMON", "daemon_port"),
-                      clientfactory, daemon=daemon, rs=False)
-    reactor.callLater(1.0, start_test_taker, wallet_services[end_bot_num - 1]['wallet'], end_bot_num, num_ygs)
-    reactor.run()
+        start_bot_num, end_bot_num = [int(x) for x in jm_single().config.get(
+            "MESSAGING:onion", "regtest_count").split(",")]
+        num_ygs = end_bot_num - start_bot_num
+        # specify the number of wallets and bots of each type:
+        wallet_services = await make_wallets(
+            num_ygs + 1,
+            wallet_structures=[[1, 3, 0, 0, 0]] * (num_ygs + 1),
+            mean_amt=2.0,
+            walletclass=walletclass)
+        #the sendpayment bot uses the last wallet in the list
+        wallet_service = wallet_services[end_bot_num - 1]['wallet']
+        jmprint("\n\nTaker wallet seed : " + wallet_services[end_bot_num - 1]['seed'])
+        # for manual audit if necessary, show the maker's wallet seeds
+        # also (note this audit should be automated in future)
+        jmprint("\n\nMaker wallet seeds: ")
+        for i in range(start_bot_num, end_bot_num):
+            jmprint("Maker seed: " + wallet_services[i - 1]['seed'])
+        jmprint("\n")
+        await wallet_service.sync_wallet(fast=True)
+        ygclass = YieldGeneratorBasic
 
-@defer.inlineCallbacks
-def start_test_taker(wallet_service, i, num_ygs):
+        # As per previous note, override non-default command line settings:
+        options = {}
+        for x in ["ordertype", "txfee_contribution", "txfee_contribution_factor",
+                  "cjfee_a", "cjfee_r", "cjfee_factor", "minsize", "size_factor"]:
+            options[x] = jm_single().config.get("YIELDGENERATOR", x)
+        ordertype = options["ordertype"]
+        txfee_contribution = int(options["txfee_contribution"])
+        txfee_contribution_factor = float(options["txfee_contribution_factor"])
+        cjfee_factor = float(options["cjfee_factor"])
+        size_factor = float(options["size_factor"])
+        if ordertype == 'reloffer':
+            cjfee_r = options["cjfee_r"]
+            # minimum size is such that you always net profit at least 20%
+            #of the miner fee
+            minsize = max(int(1.2 * txfee_contribution / float(cjfee_r)),
+                int(options["minsize"]))
+            cjfee_a = None
+        elif ordertype == 'absoffer':
+            cjfee_a = int(options["cjfee_a"])
+            minsize = int(options["minsize"])
+            cjfee_r = None
+        else:
+            assert False, "incorrect offertype config for yieldgenerator."
+
+        txtype = wallet_service.get_txtype()
+        if txtype == "p2wpkh":
+            prefix = "sw0"
+        elif txtype == "p2sh-p2wpkh":
+            prefix = "sw"
+        elif txtype == "p2pkh":
+            prefix = ""
+        else:
+            assert False, "Unsupported wallet type for yieldgenerator: " + txtype
+
+        ordertype = prefix + ordertype
+
+        for i in range(start_bot_num, end_bot_num):
+            cfg = [txfee_contribution, cjfee_a, cjfee_r, ordertype, minsize,
+                   txfee_contribution_factor, cjfee_factor, size_factor]
+            wallet_service_yg = wallet_services[i - 1]["wallet"]
+
+            wallet_service_yg.startService()
+
+            yg = ygclass(wallet_service_yg, cfg)
+            clientfactory = cf = RegtestJMClientProtocolFactory(
+                yg, proto_type="MAKER")
+            # This ensures that the right rpc/port config is passed into the daemon,
+            # for this specific bot:
+            clientfactory.i = i
+            # This ensures that this bot knows which other bots are directory nodes:
+            clientfactory.set_directory_nodes(directory_node_indices)
+            nodaemon = jm_single().config.getint("DAEMON", "no_daemon")
+            daemon = bool(nodaemon)
+            #rs = True if i == num_ygs - 1 else False
+            conn_pair = start_reactor(
+                jm_single().config.get("DAEMON", "daemon_host"),
+                jm_single().config.getint("DAEMON", "daemon_port"),
+                clientfactory, daemon=daemon, rs=False, gui=True)
+            wait_seconds = 60
+            while wait_seconds > 0:
+                await asyncio.sleep(1)
+                wait_seconds -= 1
+                if (cf.client and cf.proto_client
+                        and getattr(
+                            cf.proto_client, 'offers_ready_loop', None)):
+                    if not cf.proto_client.offers_ready_loop.running:
+                        break
+        await start_test_taker(
+            wallet_services[end_bot_num - 1]['wallet'], end_bot_num, num_ygs)
+
+
+async def start_test_taker(wallet_service, i, num_ygs):
     # this rpc manager has auth disabled,
     # and the wallet_service is set manually,
     # so no unlock etc.
@@ -270,7 +340,7 @@ def start_test_taker(wallet_service, i, num_ygs):
     # the auth token or start the websocket; so we must manually
     # sync the wallet, including bypassing any restart callback:
     def dummy_restart_callback(msg):
-        log.warn("Ignoring rescan request from backend wallet service: " + msg)
+        log.warning("Ignoring rescan request from backend wallet service: " + msg)
     mgr.daemon.services["wallet"].add_restart_callback(dummy_restart_callback)
     mgr.daemon.wallet_name = wallet_name
     mgr.daemon.services["wallet"].startService()
@@ -286,7 +356,7 @@ def start_test_taker(wallet_service, i, num_ygs):
     # we decide a coinjoin destination, counterparty count and amount.
     # Choosing a destination in the wallet is a bit easier because
     # we can query the mixdepth balance at the end.
-    coinjoin_destination = mgr.daemon.services["wallet"].get_internal_addr(4)
+    coinjoin_destination = await mgr.daemon.services["wallet"].get_internal_addr(4)
     cj_amount = 22000000
     def n_cps_from_n_ygs(n):
         if n > 4:
@@ -297,6 +367,7 @@ def start_test_taker(wallet_service, i, num_ygs):
     n_cps = n_cps_from_n_ygs(num_ygs)
     # once the taker is finished we sanity check before
     # shutting down:
+    mgr.is_taker_finished = False
     def dummy_taker_finished(res, fromtx=False,
                                waittime=0.0, txdetails=None):
         jmprint("Taker is finished")
@@ -304,7 +375,8 @@ def start_test_taker(wallet_service, i, num_ygs):
         mbal = mgr.daemon.services["wallet"].get_balance_by_mixdepth()[4]
         assert mbal == cj_amount
         jmprint("Funds: {} sats successfully arrived into mixdepth 4.".format(cj_amount))
-        stop_reactor()
+        mgr.is_taker_finished = True
+
     mgr.daemon.taker_finished = dummy_taker_finished
     mgr.start()
     agent = get_nontor_agent()
@@ -317,19 +389,12 @@ def start_test_taker(wallet_service, i, num_ygs):
         "amount_sats": cj_amount,
         "counterparties": str(n_cps),
         "destination": coinjoin_destination}).encode())
-    yield mgr.do_request(agent, b"POST", addr, body,
-                          process_coinjoin_response)
+    d = defer.ensureDeferred(mgr.do_request(agent, b"POST", addr, body, process_coinjoin_response))
+
+    while not mgr.is_taker_finished:
+        await asyncio.sleep(1)
+    return d
 
 def process_coinjoin_response(response):
     json_body = json.loads(response.decode("utf-8"))
-    print("coinjoin response: {}".format(json_body))
-
-@pytest.fixture
-def setup_onion_ygrunner(monkeypatch):
-    # For quicker testing, restrict the range of timelock
-    # addresses to avoid slow load of multiple bots.    
-    monkeypatch.setattr(jmclient.FidelityBondMixin, 'TIMELOCK_ERA_YEARS', 2)
-    monkeypatch.setattr(jmclient.FidelityBondMixin, 'TIMELOCK_EPOCH_YEAR', datetime.now().year)
-    load_test_config()
-    jm_single().bc_interface.tick_forward_chain_interval = 10
-    jm_single().bc_interface.simulate_blocks()
+    log.warning("coinjoin response: {}".format(json_body))

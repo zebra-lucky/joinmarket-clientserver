@@ -5,7 +5,7 @@ import os
 import random
 from decimal import Decimal
 from typing import Callable, List, Optional, Set, Tuple, Union
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase as AsyncioTestCase
 
 from twisted.trial.unittest import TestCase as TrialTestCase
 
@@ -35,16 +35,6 @@ def dummy_accept_callback(tx, destaddr, actual_amount, fee_est,
 
 def dummy_info_callback(msg):
     pass
-
-
-class TrialAsyncioTestCase(TrialTestCase, IsolatedAsyncioTestCase):
-
-    def __init__(self, methodName='runTest'):
-        IsolatedAsyncioTestCase.__init__(self, methodName)
-        TrialTestCase.__init__(self, methodName)
-
-    def __call__(self, *args, **kwds):
-        return IsolatedAsyncioTestCase.run(self, *args, **kwds)
 
 
 class DummyBlockchainInterface(BlockchainInterface):

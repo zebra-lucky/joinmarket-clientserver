@@ -7,7 +7,7 @@ from scripts.bumpfee import (
     check_valid_candidate, compute_bump_fee,
     create_bumped_tx, sign_transaction, sign_psbt)
 
-from common import TrialAsyncioTestCase
+from common import AsyncioTestCase
 
 def fund_wallet_addr(wallet, addr, value_btc=1):
     # special case, grab_coins returns hex from rpc:
@@ -19,7 +19,7 @@ def fund_wallet_addr(wallet, addr, value_btc=1):
     return list(utxo_in.keys())[0]
 
 
-class BumpFeeTests(TrialAsyncioTestCase):
+class BumpFeeTests(AsyncioTestCase):
 
     async def asyncSetUp(self):
         load_test_config()

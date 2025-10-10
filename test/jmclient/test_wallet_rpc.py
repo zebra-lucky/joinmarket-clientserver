@@ -28,7 +28,7 @@ from jmclient import (
     storage,
 )
 from jmclient.wallet_rpc import api_version_string, CJ_MAKER_RUNNING, CJ_NOT_RUNNING
-from commontest import make_wallets, TrialAsyncioTestCase
+from commontest import make_wallets, AsyncioTestCase
 from test_coinjoin import make_wallets_to_list, sync_wallets
 
 from test_websocket import ClientTProtocol, test_tx_hex_1, test_tx_hex_txid
@@ -48,7 +48,7 @@ class JMWalletDaemonT(JMWalletDaemon):
         return super().check_cookie(request, *args, **kwargs)
 
 
-class WalletRPCTestBase(TrialAsyncioTestCase):
+class WalletRPCTestBase(AsyncioTestCase):
     """ Base class for set up of tests of the
     Wallet RPC calls using the wallet_rpc.JMWalletDaemon service.
     """

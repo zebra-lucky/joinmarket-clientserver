@@ -6,7 +6,7 @@ from jmbitcoin import CMutableTxOut, CMutableTransaction
 from jmclient import load_test_config, jm_single,\
     SegwitLegacyWallet, VolatileStorage, YieldGeneratorBasic, \
     get_network, WalletService
-from commontest import TrialAsyncioTestCase
+from commontest import AsyncioTestCase
 
 pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
 
@@ -73,7 +73,7 @@ async def create_yg_basic(balances, txfee_contribution=0, cjfee_a=0, cjfee_r=0,
     return yg
 
 
-class CreateMyOrdersTests(TrialAsyncioTestCase):
+class CreateMyOrdersTests(AsyncioTestCase):
     """Unit tests for YieldGeneratorBasic.create_my_orders."""
 
     async def test_no_coins(self):
@@ -130,7 +130,7 @@ class CreateMyOrdersTests(TrialAsyncioTestCase):
         self.assertEqual(yg.create_my_orders(), [])
 
 
-class OidToOrderTests(TrialAsyncioTestCase):
+class OidToOrderTests(AsyncioTestCase):
     """Tests YieldGeneratorBasic.oid_to_order."""
 
     async def call_oid_to_order(self, yg, amount):
@@ -180,7 +180,7 @@ class OidToOrderTests(TrialAsyncioTestCase):
         self.assertEqual(yg.wallet_service.wallet.get_addr_mixdepth(change_addr), 1)
 
 
-class OfferReannouncementTests(TrialAsyncioTestCase):
+class OfferReannouncementTests(AsyncioTestCase):
     """Tests offer reannouncement logic from on_tx_unconfirmed."""
 
     def call_on_tx_unconfirmed(self, yg):

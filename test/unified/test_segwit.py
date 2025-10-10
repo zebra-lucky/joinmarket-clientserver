@@ -11,14 +11,14 @@ from jmbase import get_log, hextobin
 from jmclient import load_test_config, jm_single, LegacyWallet, BaseWallet
 
 
-from common import TrialAsyncioTestCase
+from common import AsyncioTestCase
 
 pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
 
 log = get_log()
 
 
-class SegWitTests(TrialAsyncioTestCase, ParametrizedTestCase):
+class SegWitTests(AsyncioTestCase, ParametrizedTestCase):
 
     async def asyncSetUp(self):
         load_test_config()

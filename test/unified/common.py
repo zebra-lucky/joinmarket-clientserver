@@ -10,7 +10,7 @@ from decimal import Decimal
 data_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(data_dir))
 
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase as AsyncioTestCase
 from twisted.trial.unittest import TestCase as TrialTestCase
 
 from jmbase import get_log
@@ -21,16 +21,6 @@ import jmbitcoin as btc
 from jmbase import chunks
 
 log = get_log()
-
-
-class TrialAsyncioTestCase(TrialTestCase, IsolatedAsyncioTestCase):
-
-    def __init__(self, methodName='runTest'):
-        IsolatedAsyncioTestCase.__init__(self, methodName)
-        TrialTestCase.__init__(self, methodName)
-
-    def __call__(self, *args, **kwds):
-        return IsolatedAsyncioTestCase.run(self, *args, **kwds)
 
 
 async def make_sign_and_push(ins_full,
@@ -138,6 +128,9 @@ async def make_wallets(n,
                 dest_addr = await wallet_service.get_new_addr(
                     j, BaseWallet.ADDRESS_TYPE_INTERNAL)
                 jm_single().bc_interface.grab_coins(dest_addr , amt)
+                # forward chain and update wallet_service current_blockheight
+                jm_single().bc_interface.tick_forward_chain(6)
+                wallet_service.update_blockheight()
     return wallets
 
 

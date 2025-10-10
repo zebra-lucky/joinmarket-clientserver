@@ -25,7 +25,7 @@ from twisted.protocols.amp import UnknownRemoteError
 from twisted.protocols import amp
 from twisted.test import proto_helpers
 from taker_test_data import t_raw_signed_tx
-from commontest import default_max_cj_fee, TrialAsyncioTestCase
+from commontest import default_max_cj_fee, AsyncioTestCase
 
 pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
 
@@ -277,7 +277,7 @@ class DummyClientProtocolFactory(JMClientProtocolFactory):
         return JMTakerClientProtocol(self, self.client, nick_priv=b"\xaa"*32 + b"\x01")
 
 
-class TrialTestJMClientProto(TrialAsyncioTestCase):
+class TrialTestJMClientProto(AsyncioTestCase):
 
     def setUp(self):
         global clientfactory
@@ -322,7 +322,7 @@ class TrialTestJMClientProto(TrialAsyncioTestCase):
         pass
 
 
-class TestMakerClientProtocol(TrialAsyncioTestCase):
+class TestMakerClientProtocol(AsyncioTestCase):
     """
     very basic test case for JMMakerClientProtocol
 

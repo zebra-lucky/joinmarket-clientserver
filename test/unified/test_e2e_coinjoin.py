@@ -178,6 +178,7 @@ class TWalletRPCManager(object):
 class E2ETCoinjoinTests(TrialTestCase):
 
     def setUp(self):
+        asyncio.set_event_loop(reactor._asyncioEventloop)
         # For quicker testing, restrict the range of timelock
         # addresses to avoid slow load of multiple bots.
         self._orig_TIMELOCK_ERA_YEARS = \

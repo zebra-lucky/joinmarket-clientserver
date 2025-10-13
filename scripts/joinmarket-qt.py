@@ -1336,7 +1336,8 @@ class TxHistoryTab(QWidget):
         hf = jm_single().config.get("GUI", "history_file")
         if not os.path.isfile(hf):
             if mainWindow:
-                mainWindow.statusBar().showMessage("No transaction history found.")
+                mainWindow.statusBar().showMessage(
+                    "No transaction history found.")
             return []
         txhist = []
         with open(hf, 'rb') as f:
@@ -1344,11 +1345,13 @@ class TxHistoryTab(QWidget):
             for tl in txlines:
                 txhist.append(tl.decode('utf-8').strip().split(','))
                 if not len(txhist[-1]) == 4:
-                    JMQtMessageBox(self,
-                                   "Incorrectedly formatted file " + hf,
-                                   mbtype='warn',
-                                   title="Error")
-                    mainWindow.statusBar().showMessage("No transaction history found.")
+                    asyncio.ensure_future(
+                        JMQtMessageBox(self,
+                                       "Incorrectedly formatted file " + hf,
+                                       mbtype='warn',
+                                       title="Error"))
+                    mainWindow.statusBar().showMessage(
+                        "No transaction history found.")
                     return []
         return txhist[::-1
                      ]  #appended to file in date order, window shows reverse
@@ -1801,10 +1804,11 @@ class JMMainWindow(QMainWindow):
         """ Initializes BIP78 workflow with modal dialog.
         """
         if not self.wallet_service:
-            JMQtMessageBox(self,
-                           "No wallet loaded.",
-                           mbtype='crit',
-                           title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "No wallet loaded.",
+                               mbtype='crit',
+                               title="Error"))
             return
         self.receiver_bip78_dialog = ReceiveBIP78Dialog(
             self.startReceiver, self.stopReceiver)
@@ -1822,14 +1826,17 @@ class JMMainWindow(QMainWindow):
             self.receiver_bip78_dialog.get_amount_text())
         mixdepth = self.receiver_bip78_dialog.get_mixdepth()
         if mixdepth > self.wallet_service.mixdepth:
-            JMQtMessageBox(self,
-                           "Wallet does not have mixdepth " + str(mixdepth),
-                           mbtype='crit', title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "Wallet does not have mixdepth " +
+                               str(mixdepth),
+                               mbtype='crit', title="Error"))
             return False
         if self.wallet_service.get_balance_by_mixdepth(minconfs=1)[mixdepth] == 0:
-            JMQtMessageBox(self, "Mixdepth " + str(mixdepth) + \
-                           " has no confirmed coins.",
-                           mbtype='crit', title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self, "Mixdepth " + str(mixdepth) +
+                               " has no confirmed coins.",
+                               mbtype='crit', title="Error"))
             return False
         self.backend_receiver = JMBIP78ReceiverManager(self.wallet_service,
             mixdepth, amount, 80, self.receiver_bip78_dialog.info_update,
@@ -1885,10 +1892,11 @@ class JMMainWindow(QMainWindow):
 
     async def exportPrivkeysJson(self):
         if not self.wallet_service:
-            JMQtMessageBox(self,
-                           "No wallet loaded.",
-                           mbtype='crit',
-                           title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "No wallet loaded.",
+                               mbtype='crit',
+                               title="Error"))
             return
         #TODO add password protection; too critical
         d = QDialog(self)
@@ -1969,25 +1977,34 @@ class JMMainWindow(QMainWindow):
                     # sanity check
                     rawpriv, _ = BTCEngine.wif_to_privkey(pk)
                     if not addr == self.wallet_service._ENGINE.privkey_to_address(rawpriv):
-                        JMQtMessageBox(None, "Failed to create privkey export -" +\
-                                       " critical error in key parsing.",
-                                       mbtype='crit')
+                        asyncio.ensure_future(
+                            JMQtMessageBox(
+                                None,
+                                "Failed to create privkey export -"
+                                " critical error in key parsing.",
+                                mbtype='crit'))
                         return
                 f.write(json.dumps(private_keys, indent=4).encode('utf-8'))
         except (IOError, os.error) as reason:
             export_error_label = "JoinmarketQt was unable to produce a private key-export."
-            JMQtMessageBox(None,
-                           export_error_label + "\n" + str(reason),
-                           mbtype='crit',
-                           title="Unable to create json file")
+            asyncio.ensure_future(
+                JMQtMessageBox(None,
+                               export_error_label + "\n" + str(reason),
+                               mbtype='crit',
+                               title="Unable to create json file"))
 
         except Exception as er:
-            JMQtMessageBox(self, str(er), mbtype='crit', title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self, str(er), mbtype='crit', title="Error"))
             return
 
-        JMQtMessageBox(self,
-                       "Private keys exported to: " + os.path.join(jm_single().datadir,
-                        privkeys_fn) + '.json', title="Success")
+        asyncio.ensure_future(
+            JMQtMessageBox(self,
+                           "Private keys exported to: " +
+                           os.path.join(
+                               jm_single().datadir, privkeys_fn) +
+                           '.json',
+                           title="Success"))
 
     def seedEntry(self) -> Tuple[Optional[str], Optional[str]]:
         d = QDialog(self)
@@ -2036,12 +2053,14 @@ class JMMainWindow(QMainWindow):
         msg = "New utxo has been automatically " +\
              "frozen to prevent forced address reuse:\n" + utxostr +\
              "\n You can unfreeze this utxo via the Coins tab."
-        JMQtMessageBox(self, msg, mbtype='info',
-                       title="New utxo frozen")
+        asyncio.ensure_future(
+            JMQtMessageBox(self, msg, mbtype='info',
+                           title="New utxo frozen"))
 
     def restartWithMsg(self, msg):
-        JMQtMessageBox(self, msg, mbtype='info',
-                       title="Restart")
+        asyncio.ensure_future(
+            JMQtMessageBox(self, msg, mbtype='info',
+                           title="Restart"))
         self.close()
 
     async def recoverWallet(self):
@@ -2057,17 +2076,16 @@ class JMMainWindow(QMainWindow):
                 enter_seed_extension_callback=None,
                 enter_do_support_fidelity_bonds=lambda: False)
             if not success:
-                JMQtMessageBox(self,
-                           "Failed to recover wallet.",
-                           mbtype='warn',
-                           title="Error")
+                await JMQtMessageBox(self,
+                                     "Failed to recover wallet.",
+                                     mbtype='warn', title="Error")
                 return
         except Exception as e:
-            JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
+            await JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
             return
 
-        JMQtMessageBox(self, 'Wallet saved to ' + self.walletname,
-                                   title="Wallet created")
+        await JMQtMessageBox(self, 'Wallet saved to ' + self.walletname,
+                             title="Wallet created")
         await self.initWallet(seed=self.walletname)
 
     async def openWallet(self):
@@ -2119,10 +2137,8 @@ class JMMainWindow(QMainWindow):
                     decrypted = await self.loadWalletFromBlockchain(
                         firstarg[0], pwd)
                 except Exception as e:
-                    JMQtMessageBox(self,
-                               str(e),
-                               mbtype='warn',
-                               title="Error")
+                    await JMQtMessageBox(self, str(e),
+                                         mbtype='warn', title="Error")
                     return
                 if decrypted == "error":
                     # special case, not a failure to decrypt the file but
@@ -2154,10 +2170,8 @@ class JMMainWindow(QMainWindow):
                 if rethrow:
                     raise e
                 else:
-                    JMQtMessageBox(self,
-                                str(e),
-                                mbtype='warn',
-                                title="Error")
+                    await JMQtMessageBox(self, str(e),
+                                         mbtype='warn', title="Error")
                     return False
             # only used for GUI display on regtest:
             self.testwalletname = wallet.seed = str(firstarg)
@@ -2177,8 +2191,8 @@ class JMMainWindow(QMainWindow):
 
         # in case an RPC error occurs in the constructor:
         if self.wallet_service.rpc_error:
-            JMQtMessageBox(self,self.wallet_service.rpc_error,
-                           mbtype='warn',title="Error")
+            await JMQtMessageBox(self,self.wallet_service.rpc_error,
+                                 mbtype='warn',title="Error")
             return "error"
 
         if jm_single().bc_interface is None:
@@ -2209,11 +2223,12 @@ class JMMainWindow(QMainWindow):
         if not self.wallet_service:  #failure to sync in constructor means object is not created
             newsyncmsg = "Unable to sync wallet - see error in console."
         elif not self.wallet_service.isRunning():
-            JMQtMessageBox(self,
-                           "The Joinmarket wallet service has stopped; this is usually caused "
-                           "by a Bitcoin Core RPC connection failure. Is your node running?",
-                           mbtype='crit',
-                           title="Error")
+            await JMQtMessageBox(
+                self,
+                "The Joinmarket wallet service has stopped; this is usually "
+                "caused by a Bitcoin Core RPC connection failure. "
+                "Is your node running?",
+                mbtype='crit', title="Error")
             qApp.exit(EXIT_FAILURE)
             return
         elif not self.wallet_service.synced:
@@ -2261,48 +2276,56 @@ class JMMainWindow(QMainWindow):
             pwd = str(text).strip().encode('utf-8')
             match = self.wallet_service.check_wallet_passphrase(pwd)
             if not match:
-                JMQtMessageBox(self,
-                               "Wrong passphrase.", mbtype='warn', title="Error")
+                asyncio.ensure_future(
+                    JMQtMessageBox(self, "Wrong passphrase.",
+                                   mbtype='warn', title="Error"))
         return True
 
     def changePassphrase(self):
         if not self.wallet_service:
-            JMQtMessageBox(self, "Cannot change passphrase without loaded wallet.",
-                           mbtype="crit", title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(
+                    self, "Cannot change passphrase without loaded wallet.",
+                    mbtype="crit", title="Error"))
             return
         if not (self.checkPassphrase()
                 and wallet_change_passphrase(self.wallet_service, self.getPassword)):
-            JMQtMessageBox(self, "Failed to change passphrase.",
-                           title="Error", mbtype="warn")
+            asyncio.ensure_future(
+                JMQtMessageBox(self, "Failed to change passphrase.",
+                               title="Error", mbtype="warn"))
             return
-        JMQtMessageBox(self, "Passphrase changed successfully.",
-                       title="Passphrase changed")
+        asyncio.ensure_future(
+            JMQtMessageBox(self, "Passphrase changed successfully.",
+                           title="Passphrase changed"))
 
     def getTestnetSeed(self):
         text, ok = QInputDialog.getText(
             self, 'Testnet seed', 'Enter a 32 char hex string as seed:')
         if not ok or not text:
-            JMQtMessageBox(self,
-                           "No seed entered, aborting",
-                           mbtype='warn',
-                           title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "No seed entered, aborting",
+                               mbtype='warn',
+                               title="Error"))
             return
         return str(text).strip()
 
     def showSeedDialog(self):
         if not self.wallet_service:
-            JMQtMessageBox(self,
-                           "No wallet loaded.",
-                           mbtype='crit',
-                           title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "No wallet loaded.",
+                               mbtype='crit',
+                               title="Error"))
             return
         try:
             self.displayWords(*self.wallet_service.get_mnemonic_words())
         except NotImplementedError:
-            JMQtMessageBox(self,
-                           "Wallet does not support seed phrases",
-                           mbtype='info',
-                           title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "Wallet does not support seed phrases",
+                               mbtype='info',
+                               title="Error"))
 
     def getPassword(self) -> str:
         pd = PasswordDialog()

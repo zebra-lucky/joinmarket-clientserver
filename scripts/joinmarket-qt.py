@@ -772,7 +772,7 @@ class SpendTab(QWidget):
             self.updateSchedView()
         self.startJoin()
 
-    def checkDirectSend(self, dtx, destaddr, amount, fee, custom_change_addr):
+    async def checkDirectSend(self, dtx, destaddr, amount, fee, custom_change_addr):
         """Give user info to decide whether to accept a direct send;
         note the callback includes the full prettified transaction,
         but currently not printing it for space reasons.
@@ -785,32 +785,33 @@ class SpendTab(QWidget):
 
         mbinfo += ["fee: " + btc.amount_to_str(fee) + ".",
                   "Accept?"]
-        reply = JMQtMessageBox(self, '\n'.join([m + '<p>' for m in mbinfo]),
-                               mbtype='question', title="Direct send")
+        reply = await JMQtMessageBox(
+            self, '\n'.join([m + '<p>' for m in mbinfo]),
+            mbtype='question', title="Direct send")
         if reply == QMessageBox.Yes:
             self.direct_send_amount = amount
             return True
         else:
             return False
 
-    def infoDirectSend(self, msg):
+    async def infoDirectSend(self, msg):
         self.clearFields(None)
-        JMQtMessageBox(self, msg, title="Success")
+        await JMQtMessageBox(self, msg, title="Success")
 
-    def errorDirectSend(self, msg):
-        JMQtMessageBox(self, msg, mbtype="warn", title="Error")
+    async def errorDirectSend(self, msg):
+        await JMQtMessageBox(self, msg, mbtype="warn", title="Error")
 
     async def startSingle(self):
         if not self.spendstate.runstate == 'ready':
             log.info("Cannot start join, already running.")
-        if not self.validateSingleSend():
+        if not await self.validateSingleSend():
             return
 
         destaddr = str(self.addressInput.text().strip())
         try:
             amount = btc.amount_to_sat(self.amountInput.text())
         except ValueError as e:
-            JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
+            await JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
             return
         makercount = int(self.numCPInput.text())
         mixdepth = int(self.mixdepthInput.text())
@@ -831,7 +832,8 @@ class SpendTab(QWidget):
                     custom_change_addr=custom_change)
                 txid = bintohex(tx.GetTxid()[::-1])
             except Exception as e:
-                JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
+                await JMQtMessageBox(
+                    self, e.args[0], title="Error", mbtype="warn")
                 return
             if not txid:
                 self.giveUp()
@@ -918,13 +920,16 @@ class SpendTab(QWidget):
               "max_cj_fee_rel = your-value-as-decimal\n"
               "in the [POLICY] section.\n"
               "Note: If you don't do this, this dialog will interrupt the tumbler.")
-        JMQtMessageBox(self, msg, mbtype="info", title="Setting fee limits.")
+        asyncio.ensure_future(
+            JMQtMessageBox(
+                self, msg, mbtype="info", title="Setting fee limits."))
         return relfee, absfee
 
     def startJoin(self):
         if not mainWindow.wallet_service:
-            JMQtMessageBox(self, "Cannot start without a loaded wallet.",
-                           mbtype="crit", title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self, "Cannot start without a loaded wallet.",
+                               mbtype="crit", title="Error"))
             return
         log.debug('starting coinjoin ..')
         #Decide whether to interrupt processing to sanity check the fees
@@ -980,8 +985,8 @@ class SpendTab(QWidget):
             else:
                 mainWindow.statusBar().showMessage(infomsg)
         elif infotype == "ABORT":
-            JMQtMessageBox(self, infomsg,
-                           mbtype='warn')
+            asyncio.ensure_future(
+                JMQtMessageBox(self, infomsg, mbtype='warn'))
             #Abort signal explicitly means this transaction will not continue.
             self.abortTransactions()
         else:
@@ -991,7 +996,7 @@ class SpendTab(QWidget):
         return tumbler_filter_orders_callback(offers_fees, cjamount,
                                               self.taker)
 
-    def checkOffers(self, offers_fee, cjamount):
+    async def checkOffers(self, offers_fee, cjamount):
         """Parse offers and total fee from client protocol,
         allow the user to agree or decide.
         """
@@ -1000,10 +1005,10 @@ class SpendTab(QWidget):
             return False
 
         if not offers_fee:
-            JMQtMessageBox(self,
-                           "Not enough matching offers found.",
-                           mbtype='warn',
-                           title="Error")
+            await JMQtMessageBox(self,
+                                 "Not enough matching offers found.",
+                                 mbtype='warn',
+                                 title="Error")
             self.giveUp()
             return
         offers, total_cj_fee = offers_fee
@@ -1037,10 +1042,9 @@ class SpendTab(QWidget):
         if total_fee_pc * 100 > jm_single().config.getint("GUI",
                                                           "check_high_fee"):
             title += ': WARNING: Fee is HIGH!!'
-        reply = JMQtMessageBox(self,
-                               '\n'.join([m + '<p>' for m in mbinfo]),
-                               mbtype='question',
-                               title=title)
+        reply = await JMQtMessageBox(self,
+                                     '\n'.join([m + '<p>' for m in mbinfo]),
+                                     mbtype='question', title=title)
         if reply == QMessageBox.Yes:
             #amount is now accepted;
             #The user is now committed to the transaction
@@ -1054,7 +1058,8 @@ class SpendTab(QWidget):
     def startNextTransaction(self):
         self.clientfactory.getClient().clientStart()
 
-    def takerFinished(self, res, fromtx=False, waittime=0.0, txdetails=None):
+    async def takerFinished(self, res, fromtx=False,
+                            waittime=0.0, txdetails=None):
         """Callback (after pass-through signal) for jmclient.Taker
         on completion of each join transaction.
         """
@@ -1079,9 +1084,11 @@ class SpendTab(QWidget):
                 "Transaction seen on network: " + self.taker.txid)
             if self.spendstate.typestate == 'single':
                 self.clearFields(None)
-                JMQtMessageBox(self, "Transaction broadcast OK. You can safely \n"
-                               "shut down if you don't want to wait.",
-                               title="Success")
+                await JMQtMessageBox(
+                    self,
+                    "Transaction broadcast OK. You can safely \n"
+                    "shut down if you don't want to wait.",
+                    title="Success")
             #TODO: theoretically possible to miss this if confirmed event
             #seen before unconfirmed.
             self.persistTxToHistory(self.taker.my_cj_addr, self.taker.cjamount,
@@ -1119,7 +1126,7 @@ class SpendTab(QWidget):
                                            str(self.taker.txid)
                 else:
                     msg = "All transactions have been confirmed."
-                JMQtMessageBox(self, msg, title="Success")
+                await JMQtMessageBox(self, msg, title="Success")
                 self.cleanUp()
             else:
                 self.giveUp()
@@ -1174,10 +1181,12 @@ class SpendTab(QWidget):
         log.debug("Transaction aborted.")
         mainWindow.statusBar().showMessage("Transaction aborted.")
         if self.taker and len(self.taker.ignored_makers) > 0:
-            JMQtMessageBox(self, "These Makers did not respond, and will be \n"
-                           "ignored in future: \n" + str(
-                            ','.join(self.taker.ignored_makers)),
-                           title="Transaction aborted")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "These Makers did not respond, and will be \n"
+                               "ignored in future: \n" +
+                               str(','.join(self.taker.ignored_makers)),
+                               title="Transaction aborted"))
             ignored_makers.extend(self.taker.ignored_makers)
         self.cleanUp()
 
@@ -1193,44 +1202,46 @@ class SpendTab(QWidget):
         self.tumbler_options = None
         self.tumbler_destaddrs = None
 
-    def validateSingleSend(self):
+    async def validateSingleSend(self):
         if not mainWindow.wallet_service:
-            JMQtMessageBox(self,
-                           "There is no wallet loaded.",
-                           mbtype='warn',
-                           title="Error")
+            await JMQtMessageBox(self,
+                                 "There is no wallet loaded.",
+                                 mbtype='warn',
+                                 title="Error")
             return False
         if jm_single().bc_interface is None:
-            JMQtMessageBox(
+            await JMQtMessageBox(
                 self,
                 "Sending coins not possible without blockchain source.",
                 mbtype='warn', title="Error")
             return False
         if len(self.addressInput.text()) == 0:
-            JMQtMessageBox(
+            await JMQtMessageBox(
                 self,
-                "Recipient address or BIP21 bitcoin: payment URI must be provided.",
+                "Recipient address or BIP21 bitcoin: "
+                "payment URI must be provided.",
                 mbtype='warn', title="Error")
             return False
         valid, errmsg = validate_address(
             str(self.addressInput.text().strip()))
         if not valid:
-            JMQtMessageBox(self, errmsg, mbtype='warn', title="Error")
+            await JMQtMessageBox(self, errmsg, mbtype='warn', title="Error")
             return False
         if len(self.numCPInput.text()) == 0:
-            JMQtMessageBox(
+            await JMQtMessageBox(
                 self,
-                "Number of counterparties must be provided. Enter '0' to do a direct send instead of a CoinJoin.",
+                "Number of counterparties must be provided. "
+                "Enter '0' to do a direct send instead of a CoinJoin.",
                 mbtype='warn', title="Error")
             return False
         if len(self.mixdepthInput.text()) == 0:
-            JMQtMessageBox(
+            await JMQtMessageBox(
                 self,
                 "Mixdepth must be chosen.",
                 mbtype='warn', title="Error")
             return False
         if len(self.amountInput.text()) == 0:
-            JMQtMessageBox(
+            await JMQtMessageBox(
                 self,
                 "Amount must be provided.",
                 mbtype='warn', title="Error")
@@ -1242,29 +1253,31 @@ class SpendTab(QWidget):
             try:
                 amount = btc.amount_to_sat(self.amountInput.text())
             except ValueError as e:
-                JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
+                await JMQtMessageBox(
+                    self, e.args[0], title="Error", mbtype="warn")
                 return False
             valid, errmsg = validate_address(change_addr)
             if not valid:
-                JMQtMessageBox(self,
-                               "Custom change address is invalid: \"%s\"" % errmsg,
-                               mbtype='warn', title="Error")
+                await JMQtMessageBox(self,
+                    "Custom change address is invalid: \"%s\"" % errmsg,
+                    mbtype='warn', title="Error")
                 return False
 
             if change_addr == dest_addr:
                 msg = ''.join(["Custom change address cannot be the ",
                                "same as the recipient address."])
-                JMQtMessageBox(self,
-                               msg,
-                               mbtype='warn', title="Error")
+                await JMQtMessageBox(self,
+                                     msg,
+                                     mbtype='warn', title="Error")
                 return False
             if amount == 0:
-                JMQtMessageBox(self, sweep_custom_change_warning,
-                               mbtype='warn', title="Error")
+                await JMQtMessageBox(self, sweep_custom_change_warning,
+                                     mbtype='warn', title="Error")
                 return False
             if makercount > 0:
-                reply = JMQtMessageBox(self, general_custom_change_warning,
-                                       mbtype='question', title="Warning")
+                reply = await JMQtMessageBox(
+                    self, general_custom_change_warning,
+                    mbtype='question', title="Warning")
                 if reply == QMessageBox.No:
                     return False
 
@@ -1277,10 +1290,9 @@ class SpendTab(QWidget):
                     engine_recognized = False
                 wallet_type = mainWindow.wallet_service.get_txtype()
                 if not engine_recognized or change_addr_type != wallet_type:
-                    reply = JMQtMessageBox(self,
-                                       nonwallet_custom_change_warning,
-                                       mbtype='question',
-                                       title="Warning")
+                    reply = await JMQtMessageBox(
+                        self, nonwallet_custom_change_warning,
+                        mbtype='question', title="Warning")
                     if reply == QMessageBox.No:
                         return False
 

@@ -1683,24 +1683,38 @@ class JMMainWindow(QMainWindow):
         # a flag to indicate that shutdown should not
         # depend on user input
         self.unconditional_shutdown = False
+        self.close_event_confirmed = False
 
     def closeEvent(self, event):
-        if self.unconditional_shutdown:
-            JMQtMessageBox(self,
-                           "RPC connection is lost; shutting down.",
-                           mbtype='crit',
-                           title="Error")
-            reply = QMessageBox.Yes
-        else:
-            quit_msg = "Are you sure you want to quit?"
-            reply = JMQtMessageBox(self, quit_msg, mbtype='question')
-        if reply == QMessageBox.Yes:
+
+        if self.close_event_confirmed:
             event.accept()
             if self.reactor.threadpool is not None:
                 self.reactor.threadpool.stop()
             stop_reactor()
+            return
+
+        def finished_cb(result):
+            if result == QMessageBox.Yes:
+                self.close_event_confirmed = True
+                self.close()
+            elif result == QMessageBox.Ok and self.unconditional_shutdown:
+                self.close_event_confirmed = True
+                self.close()
+
+        if self.unconditional_shutdown:
+            quit_msg = "RPC connection is lost; shutting down."
+            asyncio.ensure_future(
+                JMQtMessageBox(
+                    self, quit_msg, mbtype='crit', title="Error",
+                    finished_cb=finished_cb))
         else:
-            event.ignore()
+            quit_msg = "Are you sure you want to quit?"
+            asyncio.ensure_future(
+                JMQtMessageBox(
+                    self, quit_msg, mbtype='question',
+                    finished_cb=finished_cb))
+        event.ignore()
 
     def initUI(self):
         self.statusBar().showMessage("Ready")

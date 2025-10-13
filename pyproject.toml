@@ -37,7 +37,7 @@ jmdaemon = [
 jmfrost = [
 ]
 jmqtui = [
-    "PySide6==6.9.0",  # https://bugreports.qt.io/browse/QTBUG-88688
+    "PySide6==6.9.3",  # https://bugreports.qt.io/browse/QTBUG-88688
     "qrcode[pil]==7.3.1",
     'pywin32; platform_system == "Windows"',
     "qt5reactor@git+https://github.com/zebra-lucky/qt5reactor@update_versioneer#egg=qt5reactor",

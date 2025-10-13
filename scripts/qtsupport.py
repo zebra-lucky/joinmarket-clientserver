@@ -148,54 +148,70 @@ donation_more_message = '\n'.join(
              'is no change output that can be linked with your inputs later.'])
 """
 
-def JMQtMessageBox(obj, msg, mbtype='info', title='', detailed_text= None):
-    mbtypes = {'info': QMessageBox.information,
-               'crit': QMessageBox.critical,
-               'warn': QMessageBox.warning,
-               'question': QMessageBox.question}
+
+async def JMQtMessageBox(parent, msg, mbtype='info', title='',
+                         detailed_text=None, finished_cb=None):
     title = "JoinmarketQt - " + title
+    result_fut = asyncio.get_event_loop().create_future()
+
+    class JMQtDMessageBox(QMessageBox, QtCore.QObject):
+
+        def __init__(self, parent):
+            QMessageBox.__init__(self, parent=parent)
+            self.setSizeGripEnabled(True)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.layout().setSizeConstraint(QLayout.SetMaximumSize)
+
+        def resizeEvent(self, event):
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(16777215)
+            result = super().resizeEvent(event)
+
+            if detailed_text:
+                assert mbtype == 'info'
+                details_box = self.findChild(QTextEdit)
+                if details_box is not None:
+                    details_box.setMinimumHeight(0)
+                    details_box.setMaximumHeight(16777215)
+                    details_box.setMinimumWidth(0)
+                    details_box.setMaximumWidth(16777215)
+                    details_box.setSizePolicy(QSizePolicy.Expanding,
+                                              QSizePolicy.Expanding)
+            return result
+
+        @QtCore.Slot(QMessageBox.StandardButton)
+        def on_finished(self, button):
+            result_fut.set_result(button)
+
+    mb = JMQtDMessageBox(parent)
     if mbtype == 'question':
-        return QMessageBox.question(obj, title, msg, QMessageBox.Yes,
-                                    QMessageBox.No)
+        icon = QMessageBox.Question
+    elif mbtype == 'warn':
+        icon = QMessageBox.Warning
+    elif mbtype == 'crit':
+        icon = QMessageBox.Critical
     else:
-        if detailed_text:
-            assert mbtype == 'info'
+        icon = QMessageBox.Information
+    mb.setIcon(icon)
+    mb.setWindowTitle(title)
+    mb.setText(msg)
+    if detailed_text:
+        mb.setDetailedText(detailed_text)
+    if mbtype == 'question':
+        mb.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        mb.setDefaultButton(QMessageBox.No)
+    else:
+        mb.setStandardButtons(QMessageBox.Ok)
+        mb.setDefaultButton(QMessageBox.NoButton)
+    mb.finished.connect(mb.on_finished)
+    mb.open()
+    result = await result_fut
+    if finished_cb is not None:
+        finished_cb(result)
+    return result
 
-            class JMQtDMessageBox(QMessageBox):
-                def __init__(self):
-                    QMessageBox.__init__(self)
-                    self.setSizeGripEnabled(True)
-                    self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                    self.layout().setSizeConstraint(QLayout.SetMaximumSize)
-                def resizeEvent(self, event):
-                    self.setMinimumHeight(0)
-                    self.setMaximumHeight(16777215)
-                    self.setMinimumWidth(0)
-                    self.setMaximumWidth(16777215)
-                    result = super().resizeEvent(event)
-                    details_box = self.findChild(QTextEdit)
-                    if details_box is not None:
-                        details_box.setMinimumHeight(0)
-                        details_box.setMaximumHeight(16777215)
-                        details_box.setMinimumWidth(0)
-                        details_box.setMaximumWidth(16777215)
-                        details_box.setSizePolicy(QSizePolicy.Expanding,
-                                                  QSizePolicy.Expanding)
-                    return result
-
-            b = JMQtDMessageBox()
-            b.setIcon(QMessageBox.Information)
-            b.setWindowTitle(title)
-            b.setText(msg)
-            b.setDetailedText(detailed_text)
-            b.setStandardButtons(QMessageBox.Ok)
-            b.open(self.message_box_clicked)
-        else:
-            mbtypes[mbtype](obj, title, msg)
-
-    @QtCore.Slot(QMessageBox.StandardButton)
-    def message_box_clicked(self, button_id):
-        print('QMessageBox.StandardButton', button_id)
 
 class QtHandler(logging.Handler):
 

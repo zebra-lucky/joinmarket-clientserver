@@ -772,13 +772,22 @@ async def wallet_generate_recover_bip39(
     entropy = None
     mnemonic_extension = None
     if method == "generate":
-        if enter_if_use_seed_extension():
+        cb_res = enter_if_use_seed_extension()
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
+        if cb_res:
             mnemonic_extension = enter_seed_extension_callback()
+            if asyncio.iscoroutine(mnemonic_extension):
+                mnemonic_extension = await mnemonic_extension
             if not mnemonic_extension:
                 return False
     elif method == 'recover':
-        words, mnemonic_extension = enter_seed_callback()
-        words = words and words.strip()
+        if enter_seed_callback:
+            cb_res = enter_seed_callback()
+            if asyncio.iscoroutine(cb_res):
+                cb_res = await cb_res
+            words, mnemonic_extension = cb_res
+            words = words and words.strip()
         if not words:
             return False
         mnemonic_extension = mnemonic_extension and mnemonic_extension.strip()
@@ -791,11 +800,15 @@ async def wallet_generate_recover_bip39(
                         .format(method))
 
     password = enter_wallet_password_callback()
+    if asyncio.iscoroutine(password):
+        password = await password
     if not password:
         password = None
         # return False
 
     wallet_name = enter_wallet_file_name_callback()
+    if asyncio.iscoroutine(wallet_name):
+        wallet_name = await wallet_name
     if wallet_name == "cancelled":
         # currently used only by Qt, because user has option
         # to click cancel in dialog.
@@ -807,12 +820,17 @@ async def wallet_generate_recover_bip39(
         support_fidelity_bonds = False
     else:
         support_fidelity_bonds = enter_do_support_fidelity_bonds()
+        if asyncio.iscoroutine(support_fidelity_bonds):
+            support_fidelity_bonds = await support_fidelity_bonds
     wallet_cls = get_wallet_cls(get_configured_wallet_type(support_fidelity_bonds))
     wallet = await create_wallet(
         wallet_path, password, mixdepth, wallet_cls, entropy=entropy,
         entropy_extension=mnemonic_extension)
     mnemonic, mnext = wallet.get_mnemonic_words()
-    display_seed_callback and display_seed_callback(mnemonic, mnext or '')
+    if display_seed_callback:
+        cb_res = display_seed_callback(mnemonic, mnext or '')
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
     wallet.close()
     return True
 
@@ -872,9 +890,13 @@ async def wallet_generate_recover(method, walletspath,
     return True
 
 
-def wallet_change_passphrase(walletservice,
-                             enter_wallet_passphrase_callback=cli_get_wallet_passphrase_check):
+async def wallet_change_passphrase(
+    walletservice,
+    enter_wallet_passphrase_callback=cli_get_wallet_passphrase_check
+):
     passphrase = enter_wallet_passphrase_callback()
+    if asyncio.iscoroutine(passphrase):
+        passphrase = await passphrase
     if passphrase:
         walletservice.change_wallet_passphrase(passphrase)
         return True
@@ -1852,7 +1874,7 @@ async def wallet_tool_main(wallet_root_path):
             "recover", wallet_root_path, mixdepth=options.mixdepth)
         return "Recovered wallet OK" if retval else "Failed"
     elif method == "changepass":
-        retval = wallet_change_passphrase(wallet_service)
+        retval = await wallet_change_passphrase(wallet_service)
         return "Changed encryption passphrase OK" if retval else "Failed"
     elif method == "showutxos":
         return await wallet_showutxos(wallet_service,

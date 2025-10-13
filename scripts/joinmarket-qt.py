@@ -380,10 +380,10 @@ class SpendTab(QWidget):
     def checkAddress(self, addr):
         valid, errmsg = validate_address(str(addr))
         if not valid and len(addr) > 0:
-            JMQtMessageBox(self,
-                       "Bitcoin address not valid.\n" + errmsg,
-                       mbtype='warn',
-                       title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(
+                    self, "Bitcoin address not valid.\n" + errmsg,
+                    mbtype='warn', title="Error"))
 
     def parseURIAndValidateAddress(self, addr):
         addr = addr.strip()
@@ -391,10 +391,10 @@ class SpendTab(QWidget):
             try:
                 parsed = btc.decode_bip21_uri(addr)
             except ValueError as e:
-                JMQtMessageBox(self,
-                    "Bitcoin URI not valid.\n" + str(e),
-                    mbtype='warn',
-                    title="Error")
+                asyncio.ensure_future(
+                    JMQtMessageBox(
+                        self, "Bitcoin URI not valid.\n" + str(e),
+                        mbtype='warn', title="Error"))
                 return
             self.bip21_uri = addr
             addr = parsed['address']
@@ -416,22 +416,25 @@ class SpendTab(QWidget):
         try:
             amount_sat = btc.amount_to_sat(amount_str)
         except ValueError as e:
-            JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
+            asyncio.ensure_future(
+                JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn"))
             return False
         if amount_sat < jm_single().DUST_THRESHOLD:
-            JMQtMessageBox(self,
-                       "Amount " + btc.amount_to_str(amount_sat) +
-                       " is below dust threshold " +
-                       btc.amount_to_str(jm_single().DUST_THRESHOLD) + ".",
-                       mbtype='warn',
-                       title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                           "Amount " + btc.amount_to_str(amount_sat) +
+                           " is below dust threshold " +
+                           btc.amount_to_str(jm_single().DUST_THRESHOLD) + ".",
+                           mbtype='warn',
+                           title="Error"))
             return False
         return True
 
     def generateTumbleSchedule(self):
         if not mainWindow.wallet_service:
-            JMQtMessageBox(self, "Cannot start without a loaded wallet.",
-                           mbtype="crit", title="Error")
+            asyncio.ensure_future(
+                JMQtMessageBox(self, "Cannot start without a loaded wallet.",
+                               mbtype="crit", title="Error"))
             return
         #needs a set of tumbler options and destination addresses, so needs
         #a wizard
@@ -444,9 +447,10 @@ class SpendTab(QWidget):
             mainWindow.wallet_service.get_balance_by_mixdepth(),
             mainWindow.wallet_service.mixdepth)
         except ScheduleGenerationErrorNoFunds:
-            JMQtMessageBox(self,
-                           "Failed to start tumbler; no funds available.",
-                           title="Tumbler start failed.")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                               "Failed to start tumbler; no funds available.",
+                               title="Tumbler start failed."))
             return
         self.spendstate.schedule_name = wizard.get_name()
         self.updateSchedView()
@@ -457,10 +461,14 @@ class SpendTab(QWidget):
         if required_mixdepths > jm_single().config.getint("GUI", "max_mix_depth"):
             jm_single().config.set("GUI", "max_mix_depth", str(required_mixdepths))
             #recreate wallet and sync again; needed due to cache.
-            JMQtMessageBox(self,
-            "Max mixdepth has been reset to: " + str(required_mixdepths) + ".\n" +
-            "Please choose 'Load' from the Wallet menu and resync before running.",
-            title='Wallet resync required')
+            asyncio.ensure_future(
+                JMQtMessageBox(
+                    self,
+                    f"Max mixdepth has been reset to: "
+                    f"{str(required_mixdepths)}.\n"
+                    f"Please choose 'Load' from the Wallet menu and resync"
+                    f" before running.",
+                    title='Wallet resync required'))
             return
         self.sch_startButton.setEnabled(True)
 
@@ -480,21 +488,29 @@ class SpendTab(QWidget):
 
         res, schedule = get_schedule(firstarg[0])
         if not res:
-            JMQtMessageBox(self, "Not a valid JM schedule file", mbtype='crit',
-                           title='Error')
+            asyncio.ensure_future(
+                JMQtMessageBox(
+                    self, "Not a valid JM schedule file",
+                    mbtype='crit', title='Error'))
         else:
             mainWindow.statusBar().showMessage("Schedule loaded OK.")
             self.spendstate.loaded_schedule = schedule
             self.spendstate.schedule_name = os.path.basename(str(firstarg[0]))
             self.updateSchedView()
             if self.spendstate.schedule_name == "TUMBLE.schedule":
-                reply = JMQtMessageBox(self, "An incomplete tumble run detected. "
-                                       "\nDo you want to restart?",
-                                       title="Restart detected", mbtype='question')
-                if reply != QMessageBox.Yes:
-                    self.giveUp()
-                    return
-                self.tumbler_options = True
+
+                def finished_cb(result):
+                    if result != QMessageBox.Yes:
+                        self.giveUp()
+                        return
+                    self.tumbler_options = True
+
+                asyncio.ensure_future(
+                    JMQtMessageBox(
+                        self, "An incomplete tumble run detected. "
+                              "\nDo you want to restart?",
+                        title="Restart detected",
+                        mbtype='question', finished_cb=finished_cb))
 
     def updateSchedView(self):
         self.sch_label2.setText(self.spendstate.schedule_name)

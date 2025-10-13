@@ -1844,7 +1844,8 @@ class JMMainWindow(QMainWindow):
     def stopReceiver(self):
         if self.backend_receiver is None:
             return
-        self.backend_receiver.shutdown()
+        asyncio.ensure_future(
+            self.backend_receiver.shutdown())
 
     def showAboutDialog(self):
         msgbox = QDialog(self)

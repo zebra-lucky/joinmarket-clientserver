@@ -1,3 +1,4 @@
+import asyncio
 from twisted.internet import reactor
 try:
     from twisted.internet.ssl import ClientContextFactory
@@ -563,7 +564,7 @@ async def send_payjoin(manager, accept_callback=None,
         reactor.connectTCP(h, p, factory)
     return (True, None)
 
-def fallback_nonpayjoin_broadcast(err, manager):
+async def fallback_nonpayjoin_broadcast(err, manager):
     """ Sends the non-coinjoin payment onto the network,
     assuming that the payjoin failed. The reason for failure is
     `err` and will usually be communicated by the server, and must
@@ -583,7 +584,9 @@ def fallback_nonpayjoin_broadcast(err, manager):
         "to see whether original payment was made.")
         log.error(errormsg)
         # ensure any GUI as well as command line sees the message:
-        manager.user_info_callback(errormsg)
+        cb_res = manager.user_info_callback(errormsg)
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
         quit()
         return
     log.info("Payment made without coinjoin. Transaction: ")
@@ -593,13 +596,13 @@ def fallback_nonpayjoin_broadcast(err, manager):
         manager.timeout_fallback_dc.cancel()
     quit()
 
-def process_error_from_server(errormsg, errorcode, manager):
+async def process_error_from_server(errormsg, errorcode, manager):
     assert isinstance(manager, JMPayjoinManager)
     # payjoin attempt has failed, we revert to standard payment.
     assert int(errorcode) != 200
     log.warn("Receiver returned error code: {}, message: {}".format(
         errorcode, errormsg))
-    fallback_nonpayjoin_broadcast(errormsg.encode("utf-8"), manager)
+    await fallback_nonpayjoin_broadcast(errormsg.encode("utf-8"), manager)
     return
 
 async def process_payjoin_proposal_from_server(response_body, manager):
@@ -609,7 +612,8 @@ async def process_payjoin_proposal_from_server(response_body, manager):
             btc.PartiallySignedTransaction.from_base64(response_body)
     except Exception as e:
         log.error("Payjoin tx from server could not be parsed: " + repr(e))
-        fallback_nonpayjoin_broadcast(b"Server sent invalid psbt", manager)
+        await fallback_nonpayjoin_broadcast(
+            b"Server sent invalid psbt", manager)
         return
     log.debug("Receiver sent us this PSBT: ")
     log.debug(manager.wallet_service.human_readable_psbt(payjoin_proposal_psbt))
@@ -626,7 +630,8 @@ async def process_payjoin_proposal_from_server(response_body, manager):
         payjoin_proposal_psbt.serialize(), with_sign_result=True)
     if err:
         log.error("Failed to sign PSBT from the receiver, error: " + err)
-        fallback_nonpayjoin_broadcast(manager, err=b"Failed to sign receiver PSBT")
+        await fallback_nonpayjoin_broadcast(
+            manager, err=b"Failed to sign receiver PSBT")
         return
 
     signresult, sender_signed_psbt = signresultandpsbt
@@ -634,7 +639,8 @@ async def process_payjoin_proposal_from_server(response_body, manager):
     success, msg = manager.set_payjoin_psbt(payjoin_proposal_psbt, sender_signed_psbt)
     if not success:
         log.error(msg)
-        fallback_nonpayjoin_broadcast(manager, err=b"Receiver PSBT checks failed.")
+        await fallback_nonpayjoin_broadcast(
+            manager, err=b"Receiver PSBT checks failed.")
         return
     # All checks have passed. We can use the already signed transaction in
     # sender_signed_psbt.
@@ -920,14 +926,20 @@ class PayjoinConverter(object):
             cb_type="unconfirmed")
         return (True, receiver_signed_psbt.to_base64(), None)
 
-    def end_receipt(self, txd, txid):
+    async def end_receipt(self, txd, txid):
         if self.manager.mode == "gui":
-            self.info_callback("Transaction seen on network, "
-                               "view wallet tab for update.:FINAL")
+            cb_res = self.info_callback("Transaction seen on network, view "
+                                        "wallet tab for update.:FINAL")
+            if asyncio.iscoroutine(cb_res):
+                cb_res = await cb_res
         else:
-            self.info_callback("Transaction seen on network: " + txid)
+            cb_res = self.info_callback("Transaction seen on network: " + txid)
+            if asyncio.iscoroutine(cb_res):
+                cb_res = await cb_res
         # in some cases (GUI) a notification of HS end is needed:
-        self.shutdown_callback()
+        cb_res = self.shutdown_callback()
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
         # informs the wallet service transaction monitor
         # that the transaction has been processed:
         return True
@@ -1017,7 +1029,7 @@ class JMBIP78ReceiverManager(object):
         else:
             return (True, a)
 
-    def bip21_uri_from_onion_hostname(self, host):
+    async def bip21_uri_from_onion_hostname(self, host):
         """ Encoding the BIP21 URI according to BIP78 specifications,
         and specifically only supporting a hidden service endpoint.
         Note: we hardcode http; no support for TLS over HS.
@@ -1032,15 +1044,21 @@ class JMBIP78ReceiverManager(object):
                                 {"amount": bip78_btc_amount,
                                  "pj": full_pj_string.encode("utf-8")},
                                 safe=":/")
-        self.info_callback("Your hidden service is available. Please\n"
-                                   "now pass this URI string to the sender to\n"
-                                   "effect the payjoin payment:")
-        self.uri_created_callback(bip21_uri)
+        cb_res = self.info_callback("Your hidden service is available. "
+                                    "Please\npass this URI string to the "
+                                    "sender to\neffect the payjoin payment:")
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
+        cb_res = self.uri_created_callback(bip21_uri)
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
         if self.mode == "command-line":
-            self.info_callback("Keep this process running until the payment "
-                               "is received.")
+            cb_res = self.info_callback("Keep this process running until the "
+                                        "payment is received.")
+            if asyncio.iscoroutine(cb_res):
+                cb_res = await cb_res
 
-    def shutdown(self):
+    async def shutdown(self):
         """ Triggered when processing has completed successfully
         or failed, receiver side.
         """
@@ -1052,6 +1070,10 @@ class JMBIP78ReceiverManager(object):
         tfdc = self.manager.timeout_fallback_dc
         if tfdc and tfdc.active():
             tfdc.cancel()
-        self.info_callback("Hidden service shutdown complete")
+        cb_res = self.info_callback("Hidden service shutdown complete")
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
         if self.shutdown_callback:
-            self.shutdown_callback()
+            cb_res = self.shutdown_callback()
+            if asyncio.iscoroutine(cb_res):
+                cb_res = await cb_res

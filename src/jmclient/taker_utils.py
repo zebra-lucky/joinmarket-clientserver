@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import pprint
 import os
@@ -242,13 +243,17 @@ async def direct_send(wallet_service: WalletService,
         log.info(sending_info)
         if not answeryes:
             if not accept_callback:
-                if not cli_prompt_user_yesno('Would you like to push to the network?'):
-                    log.info("You chose not to broadcast the transaction, quitting.")
+                if not cli_prompt_user_yesno('Would you like to push to '
+                                             'the network?'):
+                    log.info("You chose not to broadcast the transaction, "
+                             "quitting.")
                     return False
             else:
                 accepted = accept_callback(human_readable_transaction(tx),
                                            destination, actual_amount, fee_est,
                                            custom_change_addr)
+                if asyncio.iscoroutine(accepted):
+                    accepted = await accepted
                 if not accepted:
                     return False
         if change_label:
@@ -261,13 +266,17 @@ async def direct_send(wallet_service: WalletService,
             txid = bintohex(tx.GetTxid()[::-1])
             successmsg = "Transaction sent: " + txid
             cb = log.info if not info_callback else info_callback
-            cb(successmsg)
+            cb_res = cb(successmsg)
+            if asyncio.iscoroutine(cb_res):
+                cb_res = await cb_res
             txinfo = txid if not return_transaction else tx
             return txinfo
         else:
             errormsg = "Transaction broadcast failed!"
             cb = log.error if not error_callback else error_callback
-            cb(errormsg)
+            cb_res = cb(errormsg)
+            if asyncio.iscoroutine(cb_res):
+                cb_res = await cb_res
             return False
 
 def get_tumble_log(logsdir):

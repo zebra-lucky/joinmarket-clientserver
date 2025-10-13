@@ -100,37 +100,42 @@ class BIP78ClientProtocol(BaseClientProtocol):
         self.defaultCallbacks(d)
 
     @commands.BIP78ReceiverUp.responder
-    def on_BIP78_RECEIVER_UP(self, hostname):
-        self.manager.bip21_uri_from_onion_hostname(hostname)
+    async def on_BIP78_RECEIVER_UP(self, hostname):
+        await self.manager.bip21_uri_from_onion_hostname(hostname)
         return {"accepted": True}
 
     @commands.BIP78ReceiverOriginalPSBT.responder
-    def on_BIP78_RECEIVER_ORIGINAL_PSBT(self, body, params):
+    async def on_BIP78_RECEIVER_ORIGINAL_PSBT(self, body, params):
         # TODO: we don't need binary key/vals client side, but will have to edit
         # PayjoinConverter for that:
-        retval = self.success_callback(body.encode("utf-8"), bdict_sdict_convert(
-            params, output_binary=True))
-        if not retval[0]:
-            d = self.callRemote(commands.BIP78ReceiverSendError, errormsg=retval[1],
-                                errorcode=retval[2])
+        cb_res = self.success_callback(
+            body.encode("utf-8"),
+            bdict_sdict_convert(params, output_binary=True))
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
+        if not cb_res[0]:
+            d = self.callRemote(commands.BIP78ReceiverSendError, errormsg=cb_res[1],
+                                errorcode=cb_res[2])
         else:
-            d = self.callRemote(commands.BIP78ReceiverSendProposal, psbt=retval[1])
+            d = self.callRemote(commands.BIP78ReceiverSendProposal, psbt=cb_res[1])
         self.defaultCallbacks(d)
         return {"accepted": True}
 
     @commands.BIP78ReceiverHiddenServiceShutdown.responder
-    def on_BIP78_RECEIVER_HIDDEN_SERVICE_SHUTDOWN(self):
+    async def on_BIP78_RECEIVER_HIDDEN_SERVICE_SHUTDOWN(self):
         """ This is called when the daemon has shut down the HS
         because of an invalid message/error. An earlier message
         will have conveyed the reason for the error.
         """
-        self.manager.shutdown()
+        await self.manager.shutdown()
         return {"accepted": True}
 
     @commands.BIP78ReceiverOnionSetupFailed.responder
-    def on_BIP78_RECEIVER_ONION_SETUP_FAILED(self, reason):
-        self.manager.info_callback(reason)
-        self.manager.shutdown()
+    async def on_BIP78_RECEIVER_ONION_SETUP_FAILED(self, reason):
+        cb_res = self.manager.info_callback(reason)
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
+        await self.manager.shutdown()
         return {"accepted": True}
 
     @commands.BIP78SenderUp.responder
@@ -149,8 +154,10 @@ class BIP78ClientProtocol(BaseClientProtocol):
         return {"accepted": True}
 
     @commands.BIP78SenderReceiveError.responder
-    def on_BIP78_SENDER_RECEIVER_ERROR(self, errormsg, errorcode):
-        self.failure_callback(errormsg, errorcode, self.manager)
+    async def on_BIP78_SENDER_RECEIVER_ERROR(self, errormsg, errorcode):
+        cb_res = self.failure_callback(errormsg, errorcode, self.manager)
+        if asyncio.iscoroutine(cb_res):
+            cb_res = await cb_res
         return {"accepted": True}
 
     @commands.BIP78InfoMsg.responder

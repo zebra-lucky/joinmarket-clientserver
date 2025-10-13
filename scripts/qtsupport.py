@@ -860,8 +860,9 @@ class ScheduleWizard(QWizard):
             if validate_address(daddrstring)[0]:
                 self.destaddrs.append(daddrstring)
             elif daddrstring != "":
-                JMQtMessageBox(self, "Error, invalid address", mbtype='crit',
-                               title='Error')
+                asyncio.ensure_future(
+                    JMQtMessageBox(self, "Error, invalid address",
+                                   mbtype='crit', title='Error'))
                 return None
         self.opts = {}
         self.opts['mixdepthcount'] = int(self.field("mixdepthcount"))
@@ -960,8 +961,9 @@ class CopyOnClickLineEdit(QLineEdit):
         self.selectAll()
         self.copy()
         if not self.was_copied:
-            JMQtMessageBox(self,
-                "URI copied to clipboard", mbtype="info")
+            asyncio.ensure_future(
+                JMQtMessageBox(self,
+                    "URI copied to clipboard", mbtype="info"))
         self.was_copied = True
 
 

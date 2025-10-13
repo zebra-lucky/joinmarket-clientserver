@@ -1797,9 +1797,6 @@ class JMMainWindow(QMainWindow):
         aboutMenu = menubar.addMenu('&About')
         aboutMenu.addAction(aboutAction)
 
-        self.show()
-
-
     def receiver_bip78_init(self):
         """ Initializes BIP78 workflow with modal dialog.
         """
@@ -2260,7 +2257,7 @@ class JMMainWindow(QMainWindow):
     async def generateWallet(self):
         log.debug('generating wallet')
         if jm_single().config.get("BLOCKCHAIN", "blockchain_source") == "regtest":
-            seed = self.getTestnetSeed()
+            seed = await self.getTestnetSeed()
             await self.selectWallet(testnet_seed=seed)
         else:
             await self.initWallet()
@@ -2281,32 +2278,30 @@ class JMMainWindow(QMainWindow):
                                    mbtype='warn', title="Error"))
         return True
 
-    def changePassphrase(self):
+    async def changePassphrase(self):
         if not self.wallet_service:
-            asyncio.ensure_future(
-                JMQtMessageBox(
-                    self, "Cannot change passphrase without loaded wallet.",
-                    mbtype="crit", title="Error"))
+            await JMQtMessageBox(
+                self, "Cannot change passphrase without loaded wallet.",
+                mbtype="crit", title="Error")
             return
-        if not (self.checkPassphrase()
-                and wallet_change_passphrase(self.wallet_service, self.getPassword)):
-            asyncio.ensure_future(
-                JMQtMessageBox(self, "Failed to change passphrase.",
-                               title="Error", mbtype="warn"))
+        change_res = False
+        check_res = self.checkPassphrase()
+        if check_res:
+            change_res = await wallet_change_passphrase(
+                self.wallet_service, self.getPassword)
+        if not check_res or not change_res:
+            await JMQtMessageBox(self, "Failed to change passphrase.",
+                                 title="Error", mbtype="warn")
             return
-        asyncio.ensure_future(
-            JMQtMessageBox(self, "Passphrase changed successfully.",
-                           title="Passphrase changed"))
+        await JMQtMessageBox(self, "Passphrase changed successfully.",
+                             title="Passphrase changed")
 
-    def getTestnetSeed(self):
+    async def getTestnetSeed(self):
         text, ok = QInputDialog.getText(
             self, 'Testnet seed', 'Enter a 32 char hex string as seed:')
         if not ok or not text:
-            asyncio.ensure_future(
-                JMQtMessageBox(self,
-                               "No seed entered, aborting",
-                               mbtype='warn',
-                               title="Error"))
+            await JMQtMessageBox(self, "No seed entered, aborting",
+                                 mbtype='warn', title="Error")
             return
         return str(text).strip()
 
@@ -2327,7 +2322,7 @@ class JMMainWindow(QMainWindow):
                                mbtype='info',
                                title="Error"))
 
-    def getPassword(self) -> str:
+    async def getPassword(self) -> str:
         pd = PasswordDialog()
         while True:
             for child in pd.findChildren(QLineEdit):
@@ -2337,16 +2332,16 @@ class JMMainWindow(QMainWindow):
             if pd_return == QDialog.Rejected:
                 return None
             elif pd.new_pw.text() != pd.conf_pw.text():
-                JMQtMessageBox(self,
-                               "Passphrases don't match.",
-                               mbtype='warn',
-                               title="Error")
+                await JMQtMessageBox(self,
+                                     "Passphrases don't match.",
+                                     mbtype='warn',
+                                     title="Error")
                 continue
             elif pd.new_pw.text() == "":
-                JMQtMessageBox(self,
-                               "Passphrase must not be empty.",
-                               mbtype='warn',
-                               title="Error")
+                await JMQtMessageBox(self,
+                                     "Passphrase must not be empty.",
+                                     mbtype='warn',
+                                     title="Error")
                 continue
             break
         self.textpassword = str(pd.new_pw.text())
@@ -2357,7 +2352,8 @@ class JMMainWindow(QMainWindow):
                                               'Enter wallet file name:',
                                               QLineEdit.Normal, "wallet.jmdat")
         if not ok:
-            JMQtMessageBox(self, "Create wallet aborted", mbtype='warn')
+            asyncio.ensure_future(
+                JMQtMessageBox(self, "Create wallet aborted", mbtype='warn'))
             # cannot use None for a 'fail' condition, as this is used
             # for the case where the default wallet name is to be used in non-Qt.
             return "cancelled"
@@ -2413,15 +2409,17 @@ class JMMainWindow(QMainWindow):
                     enter_do_support_fidelity_bonds=lambda: False)
 
                 if not success:
-                    JMQtMessageBox(self, "Failed to create new wallet file.",
-                                   title="Error", mbtype="warn")
+                    await JMQtMessageBox(self,
+                                         "Failed to create new wallet file.",
+                                         title="Error", mbtype="warn")
                     return
             except Exception as e:
-                JMQtMessageBox(self, e.args[0], title="Error", mbtype="warn")
+                await JMQtMessageBox(self, e.args[0],
+                                     title="Error", mbtype="warn")
                 return
 
-            JMQtMessageBox(self, 'Wallet saved to ' + self.walletname,
-                           title="Wallet created")
+            await JMQtMessageBox(self, 'Wallet saved to ' + self.walletname,
+                                 title="Wallet created")
         await self.loadWalletFromBlockchain(
             self.walletname, pwd=self.textpassword)
 
@@ -2498,14 +2496,17 @@ if jm_single().bc_interface is None:
         "Go to the 'Settings' tab and configure blockchain settings there."])
     JMQtMessageBox(None, blockchain_warning, mbtype='warn',
         title='No blockchain source')
-#refuse to load non-segwit wallet (needs extra work in wallet-utils).
-if not jm_single().config.get("POLICY", "segwit") == "true":
-    wallet_load_error = ''.join(["Joinmarket-Qt only supports segwit based wallets, ",
-                                 "please edit the config file and remove any setting ",
-                                 "of the field `segwit` in the `POLICY` section."])
-    JMQtMessageBox(None, wallet_load_error, mbtype='crit',
-                   title='Incompatible wallet type')
-    sys.exit(EXIT_FAILURE)
+
+async def refuse_if_non_segwit_wallet():
+    #refuse to load non-segwit wallet (needs extra work in wallet-utils).
+    if not jm_single().config.get("POLICY", "segwit") == "true":
+        wallet_load_error = ''.join([
+            "Joinmarket-Qt only supports segwit based wallets, ",
+            "please edit the config file and remove any setting ",
+            "of the field `segwit` in the `POLICY` section."])
+        await JMQtMessageBox(None, wallet_load_error, mbtype='crit',
+                             title='Incompatible wallet type')
+        sys.exit(EXIT_FAILURE)
 
 update_config_for_gui()
 
@@ -2540,6 +2541,7 @@ mainWindow = JMMainWindow(reactor)
 
 
 async def main():
+    await refuse_if_non_segwit_wallet()
     tabWidget = QTabWidget(mainWindow)
     jm_wallet_tab = JMWalletTab()
     await jm_wallet_tab.async_initUI()

@@ -165,7 +165,10 @@ class HelpLabel(QLabel):
         self.setStyleSheet(BLUE_FG)
 
     def mouseReleaseEvent(self, x):
-        QMessageBox.information(mainWindow, self.wtitle, self.help_text)
+        asyncio.ensure_future(
+            JMQtMessageBox(
+                mainWindow, self.help_text,
+                mbtype='info', title=self.wtitle))
 
     def enterEvent(self, event):
         self.font.setUnderline(True)
@@ -2361,19 +2364,18 @@ class JMMainWindow(QMainWindow):
         return self.walletname
 
     def displayWords(self, words: str, mnemonic_extension: str) -> None:
-        mb = QMessageBox(self)
-        seed_recovery_warning = [
+        seed_recovery_warning = "<br/>".join([
             "WRITE DOWN THIS WALLET RECOVERY SEED.",
             "If you fail to do this, your funds are",
             "at risk. Do NOT ignore this step!!!"
-        ]
-        mb.setText("<br/>".join(seed_recovery_warning))
+        ])
         text = "<strong>" + words + "</strong>"
         if mnemonic_extension:
             text += "<br/><br/>Seed extension: <strong>" + mnemonic_extension.decode('utf-8') + "</strong>"
-        mb.setInformativeText(text)
-        mb.setStandardButtons(QMessageBox.Ok)
-        ret = mb.exec_()
+        asyncio.ensure_future(
+            JMQtMessageBox(
+                self, seed_recovery_warning, mbtype='info',
+                title='Show wallet seed phrase', informative_text=text))
 
     def promptUseMnemonicExtension(self) -> bool:
         msg = "Would you like to use a two-factor mnemonic recovery phrase?\nIf you don\'t know what this is press No."

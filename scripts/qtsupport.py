@@ -150,7 +150,8 @@ donation_more_message = '\n'.join(
 
 
 async def JMQtMessageBox(parent, msg, mbtype='info', title='',
-                         detailed_text=None, finished_cb=None):
+                         detailed_text=None, informative_text=None,
+                         finished_cb=None):
     title = "JoinmarketQt - " + title
     result_fut = asyncio.get_event_loop().create_future()
 
@@ -199,6 +200,8 @@ async def JMQtMessageBox(parent, msg, mbtype='info', title='',
     mb.setText(msg)
     if detailed_text:
         mb.setDetailedText(detailed_text)
+    if informative_text:
+        mb.setInformativeText(informative_text)
     if mbtype == 'question':
         mb.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         mb.setDefaultButton(QMessageBox.No)

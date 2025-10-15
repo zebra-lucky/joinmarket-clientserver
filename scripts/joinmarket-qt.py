@@ -2020,8 +2020,14 @@ class JMMainWindow(QMainWindow):
         pp_field.setEnabled(False)
         use_pp = QCheckBox('Input Mnemonic Extension', self)
         use_pp.setCheckState(QtCore.Qt.CheckState(False))
-        use_pp.stateChanged.connect(lambda state: pp_field.setEnabled(state
-            == QtCore.Qt.Checked))
+
+        def _use_pp_state_changed(state):
+            checked = Qt.CheckState(state) == QtCore.Qt.Checked
+            pp_field.setEnabled(checked)
+            if not checked:
+                pp_field.clear()
+
+        use_pp.stateChanged.connect(_use_pp_state_changed)
         pp_hbox.addWidget(use_pp)
         pp_hbox.addWidget(pp_field)
 

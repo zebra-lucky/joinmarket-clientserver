@@ -155,7 +155,7 @@ async def JMQtMessageBox(parent, msg, mbtype='info', title='',
     title = "JoinmarketQt - " + title
     result_fut = asyncio.get_event_loop().create_future()
 
-    class JMQtDMessageBox(QMessageBox, QtCore.QObject):
+    class JMQtDMessageBox(QMessageBox):
 
         def __init__(self, parent):
             QMessageBox.__init__(self, parent=parent)
@@ -360,8 +360,8 @@ def make_password_dialog(self, msg):
     grid.setColumnStretch(1, 1)
     #TODO perhaps add an icon here
     logo = QLabel()
-    lockfile = ":icons/lock.png"
-    logo.setPixmap(QPixmap(lockfile).scaledToWidth(36))
+    lock_icon = QIcon.fromTheme(QIcon.ThemeIcon.DialogPassword)
+    logo.setPixmap(lock_icon.pixmap(QtCore.QSize(48, 48)))
     logo.setAlignment(QtCore.Qt.AlignCenter)
 
     grid.addWidget(logo, 0, 0)

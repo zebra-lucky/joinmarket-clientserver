@@ -803,8 +803,9 @@ async def wallet_generate_recover_bip39(
     if asyncio.iscoroutine(password):
         password = await password
     if not password:
+        if get_network() == 'mainnet':
+            return False
         password = None
-        # return False
 
     wallet_name = enter_wallet_file_name_callback()
     if asyncio.iscoroutine(wallet_name):
@@ -816,7 +817,7 @@ async def wallet_generate_recover_bip39(
     if not wallet_name:
         wallet_name = default_wallet_name
     wallet_path = os.path.join(walletspath, wallet_name)
-    if is_taproot_mode() or is_frost_mode():
+    if is_frost_mode():
         support_fidelity_bonds = False
     else:
         support_fidelity_bonds = enter_do_support_fidelity_bonds()

@@ -153,12 +153,12 @@ async def JMQtMessageBox(parent, msg, mbtype='info', title='',
                          detailed_text=None, informative_text=None,
                          finished_cb=None):
     title = "JoinmarketQt - " + title
-    result_fut = asyncio.get_event_loop().create_future()
 
     class JMQtDMessageBox(QMessageBox):
 
         def __init__(self, parent):
             QMessageBox.__init__(self, parent=parent)
+            self.result_fut = asyncio.get_event_loop().create_future()
             self.setSizeGripEnabled(True)
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             self.layout().setSizeConstraint(QLayout.SetMaximumSize)
@@ -184,7 +184,11 @@ async def JMQtMessageBox(parent, msg, mbtype='info', title='',
 
         @QtCore.Slot(QMessageBox.StandardButton)
         def on_finished(self, button):
-            result_fut.set_result(button)
+            self.result_fut.set_result(button)
+
+        async def result(self):
+            await self.result_fut
+            return self.result_fut.result()
 
     mb = JMQtDMessageBox(parent)
     if mbtype == 'question':
@@ -210,7 +214,7 @@ async def JMQtMessageBox(parent, msg, mbtype='info', title='',
         mb.setDefaultButton(QMessageBox.NoButton)
     mb.finished.connect(mb.on_finished)
     mb.open()
-    result = await result_fut
+    result = await mb.result()
     if finished_cb is not None:
         finished_cb(result)
     return result
@@ -391,17 +395,55 @@ def make_password_dialog(self, msg):
     return vbox
 
 
-class PasswordDialog(QDialog):
+async def JMPasswordDialog(parent):
 
-    def __init__(self):
-        super().__init__()
-        self.initUI()
+    class PasswordDialog(QDialog):
 
-    def initUI(self):
-        self.setWindowTitle('Create a new passphrase')
-        msg = "Enter a new passphrase"
-        self.setLayout(make_password_dialog(self, msg))
-        self.show()
+        def __init__(self, parent=None):
+            super().__init__(parent=parent)
+            self.result_fut = asyncio.get_event_loop().create_future()
+            self.initUI()
+
+
+        def initUI(self):
+            self.setWindowTitle('Create a new passphrase')
+            msg = "Enter a new passphrase"
+            self.setLayout(make_password_dialog(self, msg))
+            self.show()
+
+        @QtCore.Slot(QMessageBox.StandardButton)
+        def on_finished(self, result):
+            self.result_fut.set_result(result)
+
+        async def result(self):
+            await self.result_fut
+            return self.result_fut.result()
+
+    while True:
+        pd = PasswordDialog(parent=parent)
+        pd.finished.connect(pd.on_finished)
+        for child in pd.findChildren(QLineEdit):
+            child.clear()
+        pd.findChild(QLineEdit).setFocus()
+        pd.open()
+        pd_return = await pd.result()
+        if pd_return == QDialog.Rejected:
+            return None
+        elif pd.new_pw.text() != pd.conf_pw.text():
+            await JMQtMessageBox(parent,
+                                 "Passphrases don't match.",
+                                 mbtype='warn',
+                                 title="Error")
+            continue
+        elif pd.new_pw.text() == "":
+            await JMQtMessageBox(parent,
+                                 "Passphrase must not be empty.",
+                                 mbtype='warn',
+                                 title="Error")
+            continue
+        break
+    textpassword = str(pd.new_pw.text())
+    return textpassword
 
 
 class MyTreeWidget(QTreeWidget):

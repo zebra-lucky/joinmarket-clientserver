@@ -80,7 +80,7 @@ from jmclient.wallet import BaseWallet
 
 from qtsupport import ScheduleWizard, TumbleRestartWizard, config_tips,\
     config_types, QtHandler, XStream, Buttons, OkButton, CancelButton,\
-    PasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,\
+    JMPasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,\
     donation_more_message, BitcoinAmountEdit, JMIntValidator,\
     ReceiveBIP78Dialog, QRCodePopup
 
@@ -2332,29 +2332,8 @@ class JMMainWindow(QMainWindow):
                                title="Error"))
 
     async def getPassword(self) -> str:
-        pd = PasswordDialog()
-        while True:
-            for child in pd.findChildren(QLineEdit):
-                child.clear()
-            pd.findChild(QLineEdit).setFocus()
-            pd_return = pd.exec_()
-            if pd_return == QDialog.Rejected:
-                return None
-            elif pd.new_pw.text() != pd.conf_pw.text():
-                await JMQtMessageBox(self,
-                                     "Passphrases don't match.",
-                                     mbtype='warn',
-                                     title="Error")
-                continue
-            elif pd.new_pw.text() == "":
-                await JMQtMessageBox(self,
-                                     "Passphrase must not be empty.",
-                                     mbtype='warn',
-                                     title="Error")
-                continue
-            break
-        self.textpassword = str(pd.new_pw.text())
-        return self.textpassword.encode('utf-8')
+        self.textpassword = textpassword = await JMPasswordDialog(parent=self)
+        return textpassword.encode('utf-8') if textpassword else textpassword
 
     def getWalletFileName(self) -> str:
         walletname, ok = QInputDialog.getText(self, 'Choose wallet name',
@@ -2383,10 +2362,14 @@ class JMMainWindow(QMainWindow):
                 self, seed_recovery_warning, mbtype='info',
                 title='Show wallet seed phrase', informative_text=text))
 
-    def promptUseMnemonicExtension(self) -> bool:
-        msg = "Would you like to use a two-factor mnemonic recovery phrase?\nIf you don\'t know what this is press No."
-        reply = QMessageBox.question(self, 'Use mnemonic extension?',
+    async def promptUseMnemonicExtension(self) -> bool:
+        msg = ("Would you like to use a two-factor mnemonic recovery "
+                "phrase?\nIf you don\'t know what this is press No.")
+        reply = JMQtMessageBox.question(self, 'Use mnemonic extension?',
                     msg, QMessageBox.Yes, QMessageBox.No)
+        reply = await JMQtMessageBox(
+            self, msg, title='Use mnemonic extension?',
+            mbtype='question')
         return reply == QMessageBox.Yes
 
     def promptInputMnemonicExtension(self) -> Optional[str]:

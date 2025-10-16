@@ -115,13 +115,15 @@ from jmqtui import Ui_OpenWalletDialog
 
 
 class JMOpenWalletDialog(QDialog, Ui_OpenWalletDialog):
+
     DEFAULT_WALLET_FILE_TEXT = "wallet.jmdat"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.result_fut = asyncio.get_event_loop().create_future()
         self.setupUi(self)
+        self.errorMessageLabel.setWordWrap(True);
         self.passphraseEdit.setFocus()
-
         self.chooseWalletButton.clicked.connect(self.chooseWalletFile)
 
     def chooseWalletFile(self, error_text: str = ""):
@@ -153,6 +155,14 @@ class JMOpenWalletDialog(QDialog, Ui_OpenWalletDialog):
             return ""
         except Exception as e:
             return str(e)
+
+    @QtCore.Slot(QMessageBox.StandardButton)
+    def on_finished(self, result):
+        self.result_fut.set_result(result)
+
+    async def result(self):
+        await self.result_fut
+        return self.result_fut.result()
 
 
 class HelpLabel(QLabel):
@@ -1888,7 +1898,7 @@ class JMMainWindow(QMainWindow):
         btnbox.setStandardButtons(QDialogButtonBox.Ok)
         btnbox.accepted.connect(msgbox.accept)
         lyt.addWidget(btnbox)
-        msgbox.exec_()
+        msgbox.open()
 
     async def exportPrivkeysJson(self):
         if not self.wallet_service:
@@ -2097,24 +2107,31 @@ class JMMainWindow(QMainWindow):
     async def openWallet(self):
         wallet_loaded = False
         error_text = ""
+        filename_text = JMOpenWalletDialog.DEFAULT_WALLET_FILE_TEXT
 
         while not wallet_loaded:
             openWalletDialog = JMOpenWalletDialog()
+            openWalletDialog.finished.connect(openWalletDialog.on_finished)
             # Set default wallet file name and verify its lock status
-            openWalletDialog.walletFileEdit.setText(openWalletDialog.DEFAULT_WALLET_FILE_TEXT)
-            openWalletDialog.errorMessageLabel.setText(openWalletDialog.verify_lock())
-
-            if openWalletDialog.exec_() == QDialog.Accepted:
+            openWalletDialog.walletFileEdit.setText(filename_text)
+            openWalletDialog.errorMessageLabel.setText(
+                openWalletDialog.verify_lock())
+            openWalletDialog.errorMessageLabel.setText(error_text)
+            openWalletDialog.open()
+            result = await openWalletDialog.result()
+            if result == QDialog.Accepted:
                 wallet_file_text = openWalletDialog.walletFileEdit.text()
                 wallet_path = wallet_file_text
                 if not os.path.isabs(wallet_path):
-                    wallet_path = os.path.join(jm_single().datadir, 'wallets', wallet_path)
+                    wallet_path = os.path.join(
+                        jm_single().datadir, 'wallets', wallet_path)
                 try:
                     wallet_loaded = await mainWindow.loadWalletFromBlockchain(
                         wallet_path, openWalletDialog.passphraseEdit.text(),
                         rethrow=True)
                 except Exception as e:
                     error_text = str(e)
+                    filename_text = openWalletDialog.walletFileEdit.text()
             else:
                 break
 

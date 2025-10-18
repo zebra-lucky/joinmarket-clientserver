@@ -21,7 +21,7 @@ Some widgets copied and modified from https://github.com/spesmilo/electrum
 
 import asyncio
 import sys, datetime, os, logging
-import platform, json, threading, time
+import platform, json, time
 from optparse import OptionParser
 from typing import Optional, Tuple
 
@@ -82,7 +82,7 @@ from qtsupport import ScheduleWizard, TumbleRestartWizard, config_tips,\
     config_types, QtHandler, XStream, Buttons, OkButton, CancelButton,\
     JMPasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,\
     donation_more_message, BitcoinAmountEdit, JMIntValidator,\
-    ReceiveBIP78Dialog, QRCodePopup
+    ReceiveBIP78Dialog, QRCodePopup, JMExportPrivkeysDialog
 
 from twisted.internet import task
 
@@ -1909,47 +1909,28 @@ class JMMainWindow(QMainWindow):
                                title="Error"))
             return
         #TODO add password protection; too critical
-        d = QDialog(self)
-        d.setWindowTitle('Private keys')
-        d.setMinimumSize(850, 300)
-        vbox = QVBoxLayout(d)
+        d = JMExportPrivkeysDialog(self)
+        d.finished.connect(d.on_finished)
+        d.open()
 
-        msg = "%s\n%s\n%s" % (
-            "WARNING: ALL your private keys are secret.",
-            "Exposing a single private key can compromise your entire wallet!",
-            "In particular, DO NOT use 'redeem private key' services proposed by third parties."
-        )
-        vbox.addWidget(QLabel(msg))
-        e = QTextEdit()
-        e.setReadOnly(True)
-        vbox.addWidget(e)
-        b = OkButton(d, 'Export')
-        b.setEnabled(False)
-        vbox.addLayout(Buttons(CancelButton(d), b))
         private_keys = {}
-        #prepare list of addresses with non-zero balance
-        #TODO: consider adding a 'export insanely huge amount'
-        #option for anyone with gaplimit troubles, although
-        #that is a complete mess for a user, mostly changing
-        #the gaplimit in the Settings tab should address it.
-        rows = await get_wallet_printout(self.wallet_service)
         addresses = []
-        for forchange in rows[0]:
-            for mixdepth in forchange:
-                for addr_info in mixdepth:
-                    if float(addr_info[2]) > 0:
-                        addresses.append(addr_info[0])
         done = False
 
-        def privkeys_thread():
-            # To explain this (given setting was already done in
-            # load_program_config), see:
-            # https://github.com/Simplexum/python-bitcointx/blob/9f1fa67a5445f8c187ef31015a4008bc5a048eea/bitcointx/__init__.py#L242-L243
-            # note, we ignore the return value as we only want to apply
-            # the chainparams setting logic:
-            get_blockchain_interface_instance(jm_single().config)
+        async def gather_privkeys():
+            # prepare list of addresses with non-zero balance
+            # TODO: consider adding a 'export insanely huge amount'
+            # option for anyone with gaplimit troubles, although
+            # that is a complete mess for a user, mostly changing
+            # the gaplimit in the Settings tab should address it.
+            rows = await get_wallet_printout(self.wallet_service)
+            for forchange in rows[0]:
+                for mixdepth in forchange:
+                    for addr_info in mixdepth:
+                        # FIXME if float(addr_info[2]) > 0:
+                        addresses.append(addr_info[0])
             for addr in addresses:
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)    # FIXME
                 if done:
                     break
                 priv = self.wallet_service.get_key_from_addr(addr)
@@ -1958,19 +1939,22 @@ class JMMainWindow(QMainWindow):
             self.show_privkeys_signal.emit()
 
         def show_privkeys():
-            s = "\n".join(map(lambda x: x[0] + "\t" + x[1], private_keys.items(
-            )))
-            e.setText(s)
-            b.setEnabled(True)
+            s = "\n".join(map(
+                lambda x: x[0] + "\t" + x[1], private_keys.items()))
+            d.e.setText(s)
+            d.b.setEnabled(True)
 
-        self.computing_privkeys_signal.connect(lambda: e.setText(
+        self.computing_privkeys_signal.connect(lambda: d.e.setText(
             "Please wait... %d/%d" % (len(private_keys), len(addresses))))
         self.show_privkeys_signal.connect(show_privkeys)
 
-        threading.Thread(target=privkeys_thread).start()
-        if not d.exec_():
+        gather_privkeys_task = asyncio.ensure_future(gather_privkeys())
+        await gather_privkeys_task
+        result = await d.result()
+        if result == QDialog.Rejected:
             done = True
             return
+
         privkeys_fn_base = 'joinmarket-private-keys'
         i = 0
         privkeys_fn = privkeys_fn_base

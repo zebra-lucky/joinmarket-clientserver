@@ -395,6 +395,40 @@ def make_password_dialog(self, msg):
     return vbox
 
 
+class JMExportPrivkeysDialog(QDialog):
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.result_fut = asyncio.get_event_loop().create_future()
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle('Private keys')
+        self.setMinimumSize(850, 300)
+        vbox = QVBoxLayout(self)
+
+        msg = "%s\n%s\n%s" % (
+            "WARNING: ALL your private keys are secret.",
+            "Exposing a single private key can compromise your entire wallet!",
+            "In particular, DO NOT use 'redeem private key' services proposed by third parties."
+        )
+        vbox.addWidget(QLabel(msg))
+        self.e = QTextEdit()
+        self.e.setReadOnly(True)
+        vbox.addWidget(self.e)
+        self.b = OkButton(self, 'Export')
+        self.b.setEnabled(False)
+        vbox.addLayout(Buttons(CancelButton(self), self.b))
+
+    @QtCore.Slot(QMessageBox.StandardButton)
+    def on_finished(self, result):
+        self.result_fut.set_result(result)
+
+    async def result(self):
+        await self.result_fut
+        return self.result_fut.result()
+
+
 async def JMPasswordDialog(parent):
 
     class PasswordDialog(QDialog):

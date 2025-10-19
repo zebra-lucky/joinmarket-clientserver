@@ -1912,6 +1912,8 @@ class JMMainWindow(QMainWindow):
         d = JMExportPrivkeysDialog(self)
         d.finished.connect(d.on_finished)
         d.open()
+        # release control to event loop to show dialog
+        await asyncio.sleep(0.1)
 
         private_keys = {}
         addresses = []
@@ -1923,19 +1925,23 @@ class JMMainWindow(QMainWindow):
             # option for anyone with gaplimit troubles, although
             # that is a complete mess for a user, mostly changing
             # the gaplimit in the Settings tab should address it.
+            self.computing_privkeys_signal.emit()
+            # release control to event loop to show please wait text
+            await asyncio.sleep(0.01)
             rows = await get_wallet_printout(self.wallet_service)
             for forchange in rows[0]:
                 for mixdepth in forchange:
                     for addr_info in mixdepth:
-                        # FIXME if float(addr_info[2]) > 0:
-                        addresses.append(addr_info[0])
+                        if float(addr_info[2]) > 0:
+                            addresses.append(addr_info[0])
             for addr in addresses:
-                await asyncio.sleep(0.1)    # FIXME
                 if done:
                     break
                 priv = self.wallet_service.get_key_from_addr(addr)
                 private_keys[addr] = BTCEngine.privkey_to_wif(priv)
                 self.computing_privkeys_signal.emit()
+                # release control to event loop to show progress
+                await asyncio.sleep(0.01)
             self.show_privkeys_signal.emit()
 
         def show_privkeys():

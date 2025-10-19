@@ -443,7 +443,7 @@ class SpendTab(QWidget):
             return False
         return True
 
-    def generateTumbleSchedule(self):
+    async def generateTumbleSchedule(self):
         if not mainWindow.wallet_service:
             asyncio.ensure_future(
                 JMQtMessageBox(self, "Cannot start without a loaded wallet.",
@@ -452,7 +452,8 @@ class SpendTab(QWidget):
         #needs a set of tumbler options and destination addresses, so needs
         #a wizard
         wizard = ScheduleWizard()
-        wizard_return = wizard.exec_()
+        wizard.open()
+        wizard_return = await wizard.result()
         if wizard_return == QDialog.Rejected:
             return
         try:
@@ -597,7 +598,8 @@ class SpendTab(QWidget):
         self.schedule_set_button = QPushButton('Choose schedule file')
         self.schedule_set_button.clicked.connect(self.selectSchedule)
         self.schedule_generate_button = QPushButton('Generate tumble schedule')
-        self.schedule_generate_button.clicked.connect(self.generateTumbleSchedule)
+        self.schedule_generate_button.clicked.connect(
+            lambda: asyncio.ensure_future(self.generateTumbleSchedule()))
         self.sch_startButton = QPushButton('Run schedule')
         self.sch_startButton.setEnabled(False) #not runnable until schedule chosen
         self.sch_startButton.clicked.connect(self.startMultiple)

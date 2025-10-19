@@ -915,8 +915,12 @@ class SchIntroPage(QWizardPage):
 """
 
 class ScheduleWizard(QWizard):
+
     def __init__(self):
         super().__init__()
+        self.setModal(True)
+        self.result_fut = asyncio.get_event_loop().create_future()
+        self.finished.connect(self.on_finished)
         self.setWindowTitle("Joinmarket schedule generator")
         self.setPage(0, SchIntroPage(self))
         self.setPage(1, SchDynamicPage1(self))
@@ -924,10 +928,17 @@ class ScheduleWizard(QWizard):
         #self.setPage(3, SchStaticPage(self))
         self.setPage(3, SchFinishPage(self))
 
+    @QtCore.Slot(QMessageBox.StandardButton)
+    def on_finished(self, button):
+        self.result_fut.set_result(button)
+
+    async def result(self):
+        await self.result_fut
+        return self.result_fut.result()
+
     def get_name(self):
         #TODO de-hardcode generated name
         return "TUMBLE.schedule"
-
 
     def get_destaddrs(self):
         return self.destaddrs

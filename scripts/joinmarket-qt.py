@@ -602,7 +602,8 @@ class SpendTab(QWidget):
             lambda: asyncio.ensure_future(self.generateTumbleSchedule()))
         self.sch_startButton = QPushButton('Run schedule')
         self.sch_startButton.setEnabled(False) #not runnable until schedule chosen
-        self.sch_startButton.clicked.connect(self.startMultiple)
+        self.sch_startButton.clicked.connect(
+            lambda: asyncio.ensure_future(self.startMultiple()))
         self.sch_abortButton = QPushButton('Abort')
         self.sch_abortButton.setEnabled(False)
         self.sch_abortButton.clicked.connect(self.abortTransactions)
@@ -733,7 +734,7 @@ class SpendTab(QWidget):
             mainWindow.statusBar().showMessage("Transaction in a block, now continuing.")
             self.startJoin()
 
-    def startMultiple(self):
+    async def startMultiple(self):
         if jm_single().bc_interface is None:
             log.info("Cannot start join, blockchain source not available.")
             return
@@ -752,7 +753,8 @@ class SpendTab(QWidget):
             #is in case the user can increase success probability by changing them.
             if self.tumbler_options == True:
                 wizard = TumbleRestartWizard()
-                wizard_return = wizard.exec_()
+                wizard.open()
+                wizard_return = await wizard.result()
                 if wizard_return == QDialog.Rejected:
                     return
                 self.tumbler_options = wizard.getOptions()

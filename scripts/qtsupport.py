@@ -975,11 +975,24 @@ class ScheduleWizard(QWizard):
         return get_tumble_schedule(self.opts, self.destaddrs,
             wallet_balance_by_mixdepth, max_mixdepth_in_wallet)
 
+
 class TumbleRestartWizard(QWizard):
+
     def __init__(self):
         super().__init__()
+        self.setModal(True)
+        self.result_fut = asyncio.get_event_loop().create_future()
+        self.finished.connect(self.on_finished)
         self.setWindowTitle("Restart tumbler schedule")
         self.setPage(0, RestartSettingsPage(self))
+
+    @QtCore.Slot(QMessageBox.StandardButton)
+    def on_finished(self, button):
+        self.result_fut.set_result(button)
+
+    async def result(self):
+        await self.result_fut
+        return self.result_fut.result()
 
     def getOptions(self):
         self.opts = {}
@@ -990,6 +1003,7 @@ class TumbleRestartWizard(QWizard):
         #needed for Taker to check:
         jm_single().mincjamount = self.opts['mincjamount']
         return self.opts
+
 
 class RestartSettingsPage(QWizardPage):
 

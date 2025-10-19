@@ -2006,7 +2006,7 @@ class JMMainWindow(QMainWindow):
                            '.json',
                            title="Success"))
 
-    def seedEntry(self) -> Tuple[Optional[str], Optional[str]]:
+    async def seedEntry(self) -> Tuple[Optional[str], Optional[str]]:
         d = QDialog(self)
         d.setModal(1)
         d.setWindowTitle('Recover from mnemonic phrase')
@@ -2040,7 +2040,17 @@ class JMMainWindow(QMainWindow):
         hbox.addWidget(buttonBox)
         layout.addLayout(hbox, 4, 0)
         layout.addLayout(pp_hbox, 3, 0)
-        result = d.exec_()
+
+        d.result_fut = asyncio.get_event_loop().create_future()
+
+        @QtCore.Slot(QMessageBox.StandardButton)
+        def on_finished(button):
+            d.result_fut.set_result(button)
+
+        d.finished.connect(on_finished)
+        d.open()
+        await d.result_fut
+        result = d.result_fut.result()
         if result != QDialog.Accepted:
             return None, None
         mn_extension = None

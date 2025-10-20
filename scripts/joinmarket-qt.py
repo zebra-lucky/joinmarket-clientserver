@@ -78,11 +78,12 @@ from jmclient import load_program_config, get_network, update_persist_config,\
     ScheduleGenerationErrorNoFunds, Storage
 from jmclient.wallet import BaseWallet
 
-from qtsupport import ScheduleWizard, TumbleRestartWizard, config_tips,\
-    config_types, QtHandler, XStream, Buttons, OkButton, CancelButton,\
-    JMPasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,\
-    donation_more_message, BitcoinAmountEdit, JMIntValidator,\
-    ReceiveBIP78Dialog, QRCodePopup, JMExportPrivkeysDialog
+from qtsupport import (ScheduleWizard, TumbleRestartWizard, config_tips,
+    config_types, QtHandler, XStream, Buttons, OkButton, CancelButton,
+    JMPasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,
+    donation_more_message, BitcoinAmountEdit, JMIntValidator,
+    ReceiveBIP78Dialog, QRCodePopup, JMExportPrivkeysDialog,
+    JMInputDialog)
 
 from twisted.internet import task
 
@@ -2378,7 +2379,7 @@ class JMMainWindow(QMainWindow):
                              title="Passphrase changed")
 
     async def getTestnetSeed(self):
-        text, ok = QInputDialog.getText(
+        text, ok = await JMInputDialog(
             self, 'Testnet seed', 'Enter a 32 char hex string as seed:')
         text = text.strip()
         if not ok or not text:

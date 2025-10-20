@@ -149,6 +149,39 @@ donation_more_message = '\n'.join(
 """
 
 
+async def JMInputDialog(parent, title, label, echo_mode=QLineEdit.Normal,
+                        text='', finished_cb=None):
+    title = "JoinmarketQt - " + title
+
+    class QtInputDialog(QInputDialog):
+
+        def __init__(self, parent):
+            QInputDialog.__init__(self, parent)
+            self.result_fut = asyncio.get_event_loop().create_future()
+
+        @QtCore.Slot(QMessageBox.StandardButton)
+        def on_finished(self, button):
+            self.result_fut.set_result(button)
+
+        async def result(self):
+            await self.result_fut
+            return self.result_fut.result()
+
+    d = QtInputDialog(parent)
+    d.setWindowTitle(title)
+    d.setLabelText(label)
+    d.setTextEchoMode(echo_mode)
+    d.setTextValue(text)
+    d.finished.connect(d.on_finished)
+    d.open()
+    result = await d.result()
+    if finished_cb is not None:
+        finished_cb(result)
+    if result != QDialog.Accepted:
+        return '', False
+    return d.textValue(), True
+
+
 async def JMQtMessageBox(parent, msg, mbtype='info', title='',
                          detailed_text=None, informative_text=None,
                          finished_cb=None):

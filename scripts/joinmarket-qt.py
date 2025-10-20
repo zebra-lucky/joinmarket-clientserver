@@ -114,6 +114,21 @@ log.addHandler(handler)
 from jmqtui import Ui_OpenWalletDialog
 
 
+class JMFileDialog(QFileDialog):
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.result_fut = asyncio.get_event_loop().create_future()
+
+    @QtCore.Slot(QMessageBox.StandardButton)
+    def on_finished(self, result):
+        self.result_fut.set_result(result)
+
+    async def result(self):
+        await self.result_fut
+        return self.result_fut.result()
+
+
 class JMOpenWalletDialog(QDialog, Ui_OpenWalletDialog):
 
     DEFAULT_WALLET_FILE_TEXT = "wallet.jmdat"
@@ -124,19 +139,27 @@ class JMOpenWalletDialog(QDialog, Ui_OpenWalletDialog):
         self.setupUi(self)
         self.errorMessageLabel.setWordWrap(True);
         self.passphraseEdit.setFocus()
-        self.chooseWalletButton.clicked.connect(self.chooseWalletFile)
+        self.chooseWalletButton.clicked.connect(lambda:
+            asyncio.ensure_future(self.chooseWalletFile()))
 
-    def chooseWalletFile(self, error_text: str = ""):
-        (filename, _) = QFileDialog.getOpenFileName(
-            self,
-            "Choose Wallet File",
-            self._get_wallets_path(),
-            options=QFileDialog.DontUseNativeDialog,
-        )
-        if filename:
-            self.walletFileEdit.setText(filename)
-            self.passphraseEdit.setFocus()
-            self.errorMessageLabel.setText(self.verify_lock(filename))
+    async def chooseWalletFile(self, error_text: str = ""):
+        d = JMFileDialog(self)
+        d.setOptions(QFileDialog.DontUseNativeDialog)
+        d.setWindowTitle('Choose Wallet File')
+        d.setDirectory(self._get_wallets_path())
+        d.finished.connect(d.on_finished)
+        d.open()
+        await d.result_fut
+        result = d.result_fut.result()
+        if result != QDialog.Accepted:
+            return
+        filenames = d.selectedFiles()
+        if not filenames or len(filenames) != 1:
+            return
+        filename = filenames[0]
+        self.walletFileEdit.setText(os.path.basename(filename))
+        self.passphraseEdit.setFocus()
+        self.errorMessageLabel.setText(self.verify_lock(filename))
 
     @staticmethod
     def _get_wallets_path() -> str:
@@ -486,21 +509,31 @@ class SpendTab(QWidget):
             return
         self.sch_startButton.setEnabled(True)
 
-    def selectSchedule(self):
-        current_path = os.path.dirname(os.path.realpath(__file__))
-        firstarg = QFileDialog.getOpenFileName(self,
-                                               'Choose Schedule File',
-                                               dir=current_path,
-                                               options=QFileDialog.DontUseNativeDialog)
-        #TODO validate the schedule
-        log.debug('Looking for schedule in: ' + str(firstarg))
-        if not firstarg:
+    async def selectSchedule(self):
+        current_path = os.path.dirname(
+            os.path.dirname(os.path.realpath(__file__)))
+        d = JMFileDialog(self)
+        d.setOptions(QFileDialog.DontUseNativeDialog)
+        d.setWindowTitle('Choose Schedule File')
+        d.setDirectory(current_path)
+        d.finished.connect(d.on_finished)
+        d.open()
+        await d.result_fut
+        result = d.result_fut.result()
+        if result != QDialog.Accepted:
             return
+        filenames = d.selectedFiles()
+        if not filenames or len(filenames) != 1:
+            return
+        filename = filenames[0]
+
+        # TODO validate the schedule
+        log.debug('Looking for schedule in: ' + str(filename))
         #extract raw text before processing
-        with open(firstarg[0], 'rb') as f:
+        with open(filename, 'rb') as f:
             rawsched = f.read()
 
-        res, schedule = get_schedule(firstarg[0])
+        res, schedule = get_schedule(filename)
         if not res:
             asyncio.ensure_future(
                 JMQtMessageBox(
@@ -509,7 +542,7 @@ class SpendTab(QWidget):
         else:
             mainWindow.statusBar().showMessage("Schedule loaded OK.")
             self.spendstate.loaded_schedule = schedule
-            self.spendstate.schedule_name = os.path.basename(str(firstarg[0]))
+            self.spendstate.schedule_name = os.path.basename(filename)
             self.updateSchedView()
             if self.spendstate.schedule_name == "TUMBLE.schedule":
 
@@ -596,7 +629,8 @@ class SpendTab(QWidget):
         current_schedule_layout.addWidget(self.sched_view)
         sch_layout.addLayout(current_schedule_layout, 0, 0, 1, 1)
         self.schedule_set_button = QPushButton('Choose schedule file')
-        self.schedule_set_button.clicked.connect(self.selectSchedule)
+        self.schedule_set_button.clicked.connect(
+            lambda: asyncio.ensure_future(self.selectSchedule()))
         self.schedule_generate_button = QPushButton('Generate tumble schedule')
         self.schedule_generate_button.clicked.connect(
             lambda: asyncio.ensure_future(self.generateTumbleSchedule()))
@@ -2148,14 +2182,22 @@ class JMMainWindow(QMainWindow):
         if jm_single().config.get("BLOCKCHAIN", "blockchain_source") != "regtest":
             # guaranteed to exist as load_program_config was called on startup:
             wallets_path = os.path.join(jm_single().datadir, 'wallets')
-            firstarg = QFileDialog.getOpenFileName(self,
-                                                   'Choose Wallet File',
-                                                   wallets_path,
-                                                   options=QFileDialog.DontUseNativeDialog)
-            #TODO validate the file looks vaguely like a wallet file
-            log.debug('Looking for wallet in: ' + str(firstarg))
-            if not firstarg or not firstarg[0]:
+            d = JMFileDialog(self)
+            d.setOptions(QFileDialog.DontUseNativeDialog)
+            d.setWindowTitle('Choose Wallet File')
+            d.setDirectory(wallets_path)
+            d.finished.connect(d.on_finished)
+            d.open()
+            await d.result_fut
+            result = d.result_fut.result()
+            if result != QDialog.Accepted:
                 return
+            filenames = d.selectedFiles()
+            if not filenames or len(filenames) != 1:
+                return
+            filename = filenames[0]
+            #TODO validate the file looks vaguely like a wallet file
+            log.debug('Looking for wallet in: ' + str(filename))
             decrypted = False
             while not decrypted:
                 text, ok = QInputDialog.getText(self,
@@ -2167,7 +2209,7 @@ class JMMainWindow(QMainWindow):
                 pwd = str(text).strip()
                 try:
                     decrypted = await self.loadWalletFromBlockchain(
-                        firstarg[0], pwd)
+                        filename, pwd)
                 except Exception as e:
                     await JMQtMessageBox(self, str(e),
                                          mbtype='warn', title="Error")
@@ -2182,20 +2224,23 @@ class JMMainWindow(QMainWindow):
                                                         'Load Testnet wallet',
                                                         'Enter a testnet seed:',
                                                         QLineEdit.Normal)
-                if not ok:
+                testnet_seed = testnet_seed.strip()
+                if not ok or not testnet_seed:
+                    await JMQtMessageBox(self, "No seed entered, aborting",
+                                         mbtype='warn', title="Error")
                     return
-            firstarg = str(testnet_seed)
+            filename = testnet_seed
             pwd = None
             #ignore return value as there is no decryption failure possible
-            await self.loadWalletFromBlockchain(firstarg, pwd)
+            await self.loadWalletFromBlockchain(filename, pwd)
 
-    async def loadWalletFromBlockchain(self, firstarg=None,
+    async def loadWalletFromBlockchain(self, filename=None,
                                        pwd=None, rethrow=False):
-        if firstarg:
-            wallet_path = get_wallet_path(str(firstarg), None)
+        if filename:
+            wallet_path = get_wallet_path(str(filename), None)
             try:
                 wallet = await open_test_wallet_maybe(
-                    wallet_path, str(firstarg), None, ask_for_password=False,
+                    wallet_path, str(filename), None, ask_for_password=False,
                     password=pwd.encode('utf-8') if pwd else None,
                     gap_limit=jm_single().config.getint("GUI", "gaplimit"))
             except RetryableStorageError as e:
@@ -2206,7 +2251,7 @@ class JMMainWindow(QMainWindow):
                                          mbtype='warn', title="Error")
                     return False
             # only used for GUI display on regtest:
-            self.testwalletname = wallet.seed = str(firstarg)
+            self.testwalletname = wallet.seed = str(filename)
         if 'listunspent_args' not in jm_single().config.options('POLICY'):
             jm_single().config.set('POLICY', 'listunspent_args', '[0]')
         assert wallet, "No wallet loaded"
@@ -2293,7 +2338,8 @@ class JMMainWindow(QMainWindow):
         log.debug('generating wallet')
         if jm_single().config.get("BLOCKCHAIN", "blockchain_source") == "regtest":
             seed = await self.getTestnetSeed()
-            await self.selectWallet(testnet_seed=seed)
+            if seed:
+                await self.selectWallet(testnet_seed=seed)
         else:
             await self.initWallet()
 
@@ -2334,11 +2380,12 @@ class JMMainWindow(QMainWindow):
     async def getTestnetSeed(self):
         text, ok = QInputDialog.getText(
             self, 'Testnet seed', 'Enter a 32 char hex string as seed:')
+        text = text.strip()
         if not ok or not text:
             await JMQtMessageBox(self, "No seed entered, aborting",
                                  mbtype='warn', title="Error")
             return
-        return str(text).strip()
+        return text
 
     def showSeedDialog(self):
         if not self.wallet_service:
@@ -2439,6 +2486,7 @@ class JMMainWindow(QMainWindow):
                                  title="Wallet created")
         await self.loadWalletFromBlockchain(
             self.walletname, pwd=self.textpassword)
+
 
 async def get_wallet_printout(wallet_service):
     """Given a WalletService object, retrieve the list of

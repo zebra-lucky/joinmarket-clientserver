@@ -1323,7 +1323,6 @@ class TxHistoryTab(QWidget):
 
     def initUI(self):
         self.tHTW = MyTreeWidget(self, self.create_menu, self.getHeaders())
-        self.tHTW.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tHTW.header().setSectionResizeMode(QHeaderView.Interactive)
         self.tHTW.header().setStretchLastSection(False)
         self.tHTW.on_update = self.updateTxInfo
@@ -1380,9 +1379,9 @@ class TxHistoryTab(QWidget):
         address_valid = False
         if item:
             address = str(item.text(0))
-            address_valid = validate_address(address)
+            address_valid = validate_address(address)[0]
 
-        menu = QMenu()
+        menu = QMenu(self)
         if address_valid:
             menu.addAction("Copy address to clipboard",
                            lambda: app.clipboard().setText(address))
@@ -1391,7 +1390,9 @@ class TxHistoryTab(QWidget):
         menu.addAction("Copy full transaction info to clipboard",
                        lambda: app.clipboard().setText(
                            ','.join([str(item.text(_)) for _ in range(4)])))
-        menu.exec_(self.tHTW.viewport().mapToGlobal(position))
+        pos = self.tHTW.viewport().mapToGlobal(position)
+        menu.popup(pos)
+
 
 class CoinsTab(QWidget):
 
@@ -1498,19 +1499,23 @@ class CoinsTab(QWidget):
                 txids.append(txid)
                 idxs.append(idx)
         except Exception as e:
-            log.error("Error retrieving txids in Coins tab: " + repr(e))
+            log.debug("Error retrieving txids in Coins tab: " + repr(e))
             return
-        # current item
-        item = self.cTW.currentItem()
-        txid, idx = item.text(0).split(":")
 
-        menu = QMenu()
-        menu.addAction(
-            "Freeze/un-freeze utxo(s) (toggle)",
-            lambda: asyncio.create_task(self.toggle_utxo_disable(txids, idxs)))
-        menu.addAction("Copy transaction id to clipboard",
-                       lambda: app.clipboard().setText(txid))
-        menu.exec_(self.cTW.viewport().mapToGlobal(position))
+        menu = QMenu(self)
+        if len(selected_items) > 0:
+            menu.addAction(
+                "Freeze/un-freeze utxo(s) (toggle)",
+                lambda: asyncio.create_task(
+                            self.toggle_utxo_disable(txids, idxs)))
+        if len(selected_items) == 1:
+            # current item
+            item = self.cTW.currentItem()
+            txid = item.text(0).split(":")
+            menu.addAction("Copy transaction id to clipboard",
+                           lambda: app.clipboard().setText(txid))
+        pos = self.cTW.viewport().mapToGlobal(position)
+        menu.popup(pos)
 
 
 class JMWalletTab(QWidget):
@@ -1529,7 +1534,6 @@ class JMWalletTab(QWidget):
         v = MyTreeWidget(self, self.create_menu, self.getHeaders())
         v.header().resizeSection(0, 400)    # size of "Address" column
         v.header().resizeSection(1, 130)    # size of "Index" column
-        v.setSelectionMode(QAbstractItemView.ExtendedSelection)
         v.on_update = lambda: asyncio.create_task(self.updateWalletInfo())
         v.hide()
         self.walletTree = v
@@ -1565,7 +1569,7 @@ class JMWalletTab(QWidget):
                     xpub = parsed[-1]
                     xpub_exists = True
 
-        menu = QMenu()
+        menu = QMenu(self)
         if address_valid:
             menu.addAction("Copy address to clipboard",
                            lambda: app.clipboard().setText(txt),
@@ -1590,7 +1594,8 @@ class JMWalletTab(QWidget):
             shortcut=QKeySequence(QKeySequence.Refresh))
 
         #TODO add more items to context menu
-        menu.exec_(self.walletTree.viewport().mapToGlobal(position))
+        pos = self.walletTree.viewport().mapToGlobal(position)
+        menu.popup(pos)
 
     def openQRCodePopup(self, title, data):
         popup = QRCodePopup(self, title, data)

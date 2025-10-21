@@ -2201,10 +2201,9 @@ class JMMainWindow(QMainWindow):
             log.debug('Looking for wallet in: ' + str(filename))
             decrypted = False
             while not decrypted:
-                text, ok = QInputDialog.getText(self,
-                                                'Decrypt wallet',
-                                                'Enter your password:',
-                                                echo=QLineEdit.Password)
+                text, ok = await JMInputDialog(
+                    self, 'Decrypt wallet', 'Enter your password:',
+                    echo=QLineEdit.Password)
                 if not ok:
                     return
                 pwd = str(text).strip()
@@ -2221,11 +2220,11 @@ class JMMainWindow(QMainWindow):
                     self.close()
         else:
             if not testnet_seed:
-                testnet_seed, ok = QInputDialog.getText(self,
-                                                        'Load Testnet wallet',
-                                                        'Enter a testnet seed:',
-                                                        QLineEdit.Normal)
-                testnet_seed = testnet_seed.strip()
+                testnet_seed, ok = await JMInputDialog(
+                    self, 'Load Testnet wallet', 'Enter a testnet seed:',
+                    QLineEdit.Normal)
+                if testnet_seed:
+                    testnet_seed = testnet_seed.strip()
                 if not ok or not testnet_seed:
                     await JMQtMessageBox(self, "No seed entered, aborting",
                                          mbtype='warn', title="Error")
@@ -2344,12 +2343,12 @@ class JMMainWindow(QMainWindow):
         else:
             await self.initWallet()
 
-    def checkPassphrase(self):
+    async def checkPassphrase(self):
         match = False
         while not match:
-            text, ok = QInputDialog.getText(self, 'Passphrase check',
-                                            'Enter your passphrase:',
-                                            echo=QLineEdit.Password)
+            text, ok = await JMInputDialog(
+                self, 'Passphrase check', 'Enter your passphrase:',
+                echo=QLineEdit.Password)
             if not ok:
                 return False
             pwd = str(text).strip().encode('utf-8')
@@ -2367,7 +2366,7 @@ class JMMainWindow(QMainWindow):
                 mbtype="crit", title="Error")
             return
         change_res = False
-        check_res = self.checkPassphrase()
+        check_res = await self.checkPassphrase()
         if check_res:
             change_res = await wallet_change_passphrase(
                 self.wallet_service, self.getPassword)
@@ -2381,7 +2380,8 @@ class JMMainWindow(QMainWindow):
     async def getTestnetSeed(self):
         text, ok = await JMInputDialog(
             self, 'Testnet seed', 'Enter a 32 char hex string as seed:')
-        text = text.strip()
+        if text:
+            text = text.strip()
         if not ok or not text:
             await JMQtMessageBox(self, "No seed entered, aborting",
                                  mbtype='warn', title="Error")
@@ -2409,17 +2409,17 @@ class JMMainWindow(QMainWindow):
         self.textpassword = textpassword = await JMPasswordDialog(parent=self)
         return textpassword.encode('utf-8') if textpassword else textpassword
 
-    def getWalletFileName(self) -> str:
-        walletname, ok = QInputDialog.getText(self, 'Choose wallet name',
-                                              'Enter wallet file name:',
-                                              QLineEdit.Normal, "wallet.jmdat")
+    async def getWalletFileName(self) -> str:
+        walletname, ok = await JMInputDialog(
+            self, 'Choose wallet name', 'Enter wallet file name:',
+            QLineEdit.Normal, "wallet.jmdat")
         if not ok:
             asyncio.ensure_future(
                 JMQtMessageBox(self, "Create wallet aborted", mbtype='warn'))
             # cannot use None for a 'fail' condition, as this is used
             # for the case where the default wallet name is to be used in non-Qt.
             return "cancelled"
-        self.walletname = str(walletname)
+        self.walletname = str(walletname).strip()
         return self.walletname
 
     def displayWords(self, words: str, mnemonic_extension: str) -> None:
@@ -2446,11 +2446,10 @@ class JMMainWindow(QMainWindow):
             mbtype='question')
         return reply == QMessageBox.Yes
 
-    def promptInputMnemonicExtension(self) -> Optional[str]:
-        mnemonic_extension, ok = QInputDialog.getText(self,
-                                     'Input Mnemonic Extension',
-                                     'Enter mnemonic Extension:',
-                                     QLineEdit.Normal, "")
+    async def promptInputMnemonicExtension(self) -> Optional[str]:
+        mnemonic_extension, ok = await JMInputDialog(
+            self, 'Input Mnemonic Extension', 'Enter mnemonic Extension:',
+            QLineEdit.Normal, "")
         if not ok:
             return None
         return str(mnemonic_extension)

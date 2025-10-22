@@ -1829,7 +1829,8 @@ class JMMainWindow(QMainWindow):
             lambda: asyncio.create_task(self.exportPrivkeysJson()))
         changePassAction = QAction('&Change passphrase...', self)
         changePassAction.setStatusTip('Change wallet encryption passphrase')
-        changePassAction.triggered.connect(self.changePassphrase)
+        changePassAction.triggered.connect(
+            lambda: asyncio.create_task(self.changePassphrase()))
         receivePayjoinAction = QAction('Receive &payjoin...', self)
         receivePayjoinAction.setStatusTip('Receive BIP78 style payment')
         receivePayjoinAction.triggered.connect(self.receiver_bip78_init)
@@ -2165,7 +2166,7 @@ class JMMainWindow(QMainWindow):
             result = await openWalletDialog.result()
             if result == QDialog.Accepted:
                 wallet_file_text = openWalletDialog.walletFileEdit.text()
-                wallet_path = wallet_file_text
+                wallet_path = wallet_file_text.strip()
                 if not os.path.isabs(wallet_path):
                     wallet_path = os.path.join(
                         jm_single().datadir, 'wallets', wallet_path)
@@ -2203,7 +2204,7 @@ class JMMainWindow(QMainWindow):
             while not decrypted:
                 text, ok = await JMInputDialog(
                     self, 'Decrypt wallet', 'Enter your password:',
-                    echo=QLineEdit.Password)
+                    echo_mode=QLineEdit.Password)
                 if not ok:
                     return
                 pwd = str(text).strip()
@@ -2348,7 +2349,7 @@ class JMMainWindow(QMainWindow):
         while not match:
             text, ok = await JMInputDialog(
                 self, 'Passphrase check', 'Enter your passphrase:',
-                echo=QLineEdit.Password)
+                echo_mode=QLineEdit.Password)
             if not ok:
                 return False
             pwd = str(text).strip().encode('utf-8')
@@ -2439,8 +2440,6 @@ class JMMainWindow(QMainWindow):
     async def promptUseMnemonicExtension(self) -> bool:
         msg = ("Would you like to use a two-factor mnemonic recovery "
                 "phrase?\nIf you don\'t know what this is press No.")
-        reply = JMQtMessageBox.question(self, 'Use mnemonic extension?',
-                    msg, QMessageBox.Yes, QMessageBox.No)
         reply = await JMQtMessageBox(
             self, msg, title='Use mnemonic extension?',
             mbtype='question')
@@ -2452,6 +2451,7 @@ class JMMainWindow(QMainWindow):
             QLineEdit.Normal, "")
         if not ok:
             return None
+        mnemonic_extension = mnemonic_extension and mnemonic_extension.strip()
         return str(mnemonic_extension)
 
     async def initWallet(self, seed=None):

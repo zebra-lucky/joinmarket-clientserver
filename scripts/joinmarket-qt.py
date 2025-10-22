@@ -2352,7 +2352,7 @@ class JMMainWindow(QMainWindow):
                 echo_mode=QLineEdit.Password)
             if not ok:
                 return False
-            pwd = str(text).strip().encode('utf-8')
+            pwd = text.encode('utf-8')
             match = self.wallet_service.check_wallet_passphrase(pwd)
             if not match:
                 asyncio.ensure_future(

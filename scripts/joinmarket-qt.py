@@ -1185,7 +1185,10 @@ class SpendTab(QWidget):
 
     def persistTxToHistory(self, addr, amt, txid):
         #persist the transaction to history
-        with open(jm_single().config.get("GUI", "history_file"), 'ab') as f:
+        hf = jm_single().config.get("GUI", "history_file")
+        wallet_path = mainWindow.wallet_service.wallet._storage.get_location()
+        hf = f'{wallet_path}-{hf}'
+        with open(hf, 'ab') as f:
             f.write((','.join([addr, btc.amount_to_btc_str(amt), txid,
                               datetime.datetime.now(
                                   ).strftime("%Y/%m/%d %H:%M:%S")])).encode('utf-8'))
@@ -1355,6 +1358,7 @@ class TxHistoryTab(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
+        mainWindow.tx_history_tab = self
 
     def initUI(self):
         self.tHTW = MyTreeWidget(self, self.create_menu, self.getHeaders())
@@ -1385,6 +1389,10 @@ class TxHistoryTab(QWidget):
 
     def getTxInfoFromFile(self):
         hf = jm_single().config.get("GUI", "history_file")
+        if not mainWindow.wallet_service:
+            return []
+        wallet_path = mainWindow.wallet_service.wallet._storage.get_location()
+        hf = f'{wallet_path}-{hf}'
         if not os.path.isfile(hf):
             if mainWindow:
                 mainWindow.statusBar().showMessage(
@@ -2331,6 +2339,7 @@ class JMMainWindow(QMainWindow):
                           "the blockchain interface?")
                 return
             newsyncmsg = "Wallet synced successfully."
+        self.tx_history_tab.updateTxInfo()
         if newsyncmsg != self.syncmsg:
             self.syncmsg = newsyncmsg
             self.statusBar().showMessage(self.syncmsg)

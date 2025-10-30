@@ -937,7 +937,7 @@ class SpendTab(QWidget):
 
         if makercount < jm_single().config.getint(
             "POLICY", "minimum_makers"):
-            JMQtMessageBox(self, "Number of counterparties (" + str(
+            await JMQtMessageBox(self, "Number of counterparties (" + str(
                 makercount) + ") below minimum_makers (" + str(
                 jm_single().config.getint("POLICY", "minimum_makers")) +
                 ") in configuration.",

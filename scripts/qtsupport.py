@@ -158,6 +158,7 @@ async def JMInputDialog(parent, title, label, echo_mode=QLineEdit.Normal,
         def __init__(self, parent):
             QInputDialog.__init__(self, parent)
             self.result_fut = asyncio.get_event_loop().create_future()
+            self.setModal(True)
 
         @QtCore.Slot(QMessageBox.StandardButton)
         def on_finished(self, button):
@@ -195,6 +196,7 @@ async def JMQtMessageBox(parent, msg, mbtype='info', title='',
             self.setSizeGripEnabled(True)
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             self.layout().setSizeConstraint(QLayout.SetMaximumSize)
+            self.setModal(True)
 
         def resizeEvent(self, event):
             self.setMinimumHeight(0)
@@ -434,6 +436,7 @@ class JMExportPrivkeysDialog(QDialog):
         super().__init__(parent=parent)
         self.result_fut = asyncio.get_event_loop().create_future()
         self.initUI()
+        self.setModal(True)
 
     def initUI(self):
         self.setWindowTitle('Private keys')
@@ -470,6 +473,7 @@ async def JMPasswordDialog(parent):
             super().__init__(parent=parent)
             self.result_fut = asyncio.get_event_loop().create_future()
             self.initUI()
+            self.setModal(True)
 
 
         def initUI(self):
@@ -949,9 +953,8 @@ class SchIntroPage(QWizardPage):
 
 class ScheduleWizard(QWizard):
 
-    def __init__(self):
-        super().__init__()
-        self.setModal(True)
+    def __init__(self, parent, *args,  **kwargs):
+        super().__init__(parent, *args,  **kwargs)
         self.result_fut = asyncio.get_event_loop().create_future()
         self.finished.connect(self.on_finished)
         self.setWindowTitle("Joinmarket schedule generator")
@@ -960,6 +963,7 @@ class ScheduleWizard(QWizard):
         self.setPage(2, SchDynamicPage2(self))
         #self.setPage(3, SchStaticPage(self))
         self.setPage(3, SchFinishPage(self))
+        self.setModal(True)
 
     @QtCore.Slot(QMessageBox.StandardButton)
     def on_finished(self, button):
@@ -1011,13 +1015,13 @@ class ScheduleWizard(QWizard):
 
 class TumbleRestartWizard(QWizard):
 
-    def __init__(self):
-        super().__init__()
-        self.setModal(True)
+    def __init__(self, parent, *args,  **kwargs):
+        super().__init__(parent, *args,  **kwargs)
         self.result_fut = asyncio.get_event_loop().create_future()
         self.finished.connect(self.on_finished)
         self.setWindowTitle("Restart tumbler schedule")
         self.setPage(0, RestartSettingsPage(self))
+        self.setModal(True)
 
     @QtCore.Slot(QMessageBox.StandardButton)
     def on_finished(self, button):
@@ -1136,14 +1140,14 @@ class ReceiveBIP78Dialog(QDialog):
     parameter_types = ["btc", int]
     parameter_settings = ["", 0]
 
-    def __init__(self, action_fn, cancel_fn, parameter_settings=None):
+    def __init__(self, parent, action_fn, cancel_fn, parameter_settings=None):
         """ Parameter action_fn:
         each time the user opens the dialog they will
         pass a function to be connected to the action-button.
         Signature: no arguments, return value False if action initiation
         is aborted, otherwise True.
         """
-        super().__init__()
+        super().__init__(parent)
         if parameter_settings:
             self.parameter_settings = parameter_settings
         # these QLineEdit or QLabel objects will contain the
@@ -1154,9 +1158,9 @@ class ReceiveBIP78Dialog(QDialog):
         self.cancel_fn = cancel_fn
         self.updates_final = False
         self.initUI()
+        self.setModal(True)
 
     def initUI(self):
-        self.setModal(1)
         self.setWindowTitle("Receive Payjoin")
         self.setLayout(self.get_receive_bip78_dialog())
         self.show()

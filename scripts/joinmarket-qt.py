@@ -132,14 +132,15 @@ class JMOpenWalletDialog(QDialog, Ui_OpenWalletDialog):
 
     DEFAULT_WALLET_FILE_TEXT = "wallet.jmdat"
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, parent, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
         self.result_fut = asyncio.get_event_loop().create_future()
         self.setupUi(self)
         self.errorMessageLabel.setWordWrap(True);
         self.passphraseEdit.setFocus()
         self.chooseWalletButton.clicked.connect(lambda:
             asyncio.ensure_future(self.chooseWalletFile()))
+        self.setModal(True)
 
     async def chooseWalletFile(self, error_text: str = ""):
         d = JMFileDialog(self)
@@ -473,7 +474,7 @@ class SpendTab(QWidget):
             return
         #needs a set of tumbler options and destination addresses, so needs
         #a wizard
-        wizard = ScheduleWizard()
+        wizard = ScheduleWizard(mainWindow)
         wizard.open()
         wizard_return = await wizard.result()
         if wizard_return == QDialog.Rejected:
@@ -785,7 +786,7 @@ class SpendTab(QWidget):
             #which needs new dynamic option values. The rationale for using input
             #is in case the user can increase success probability by changing them.
             if self.tumbler_options == True:
-                wizard = TumbleRestartWizard()
+                wizard = TumbleRestartWizard(mainWindow)
                 wizard.open()
                 wizard_return = await wizard.result()
                 if wizard_return == QDialog.Rejected:
@@ -1872,7 +1873,7 @@ class JMMainWindow(QMainWindow):
                                title="Error"))
             return
         self.receiver_bip78_dialog = ReceiveBIP78Dialog(
-            self.startReceiver, self.stopReceiver)
+            self, self.startReceiver, self.stopReceiver)
 
     async def startReceiver(self):
         """ Initializes BIP78 Receiving object and
@@ -2059,7 +2060,7 @@ class JMMainWindow(QMainWindow):
 
     async def seedEntry(self) -> Tuple[Optional[str], Optional[str]]:
         d = QDialog(self)
-        d.setModal(1)
+        d.setModal(True)
         d.setWindowTitle('Recover from mnemonic phrase')
         layout = QGridLayout(d)
         message_e = QTextEdit()
@@ -2161,7 +2162,7 @@ class JMMainWindow(QMainWindow):
         filename_text = JMOpenWalletDialog.DEFAULT_WALLET_FILE_TEXT
 
         while not wallet_loaded:
-            openWalletDialog = JMOpenWalletDialog()
+            openWalletDialog = JMOpenWalletDialog(self)
             openWalletDialog.finished.connect(openWalletDialog.on_finished)
             # Set default wallet file name and verify its lock status
             openWalletDialog.walletFileEdit.setText(filename_text)

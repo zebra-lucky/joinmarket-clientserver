@@ -31,8 +31,6 @@ from PySide6.QtGui import *
 
 from PySide6.QtWidgets import *
 
-import PySide6.QtAsyncio as QtAsyncio
-
 if platform.system() == 'Windows':
     MONOSPACE_FONT = 'Lucida Console'
 elif platform.system() == 'Darwin':
@@ -2537,42 +2535,11 @@ async def get_wallet_printout(wallet_service):
     total_bal = walletview.get_fmt_balance() if wallet_service.synced else None
     return (rows, mbalances, xpubs, total_bal)
 
+
 ################################
 
-parser = OptionParser(usage='usage: %prog [options]')
-add_base_options(parser)
-# wallet related base options are not applicable:
-parser.remove_option("--recoversync")
-parser.remove_option("--wallet-password-stdin")
-(options, args) = parser.parse_args()
-
-config_load_error = False
-try:
-    load_program_config(config_path=options.datadir)
-except Exception as e:
-    config_load_error = "Failed to setup joinmarket: "+repr(e)
-    if "RPC" in repr(e):
-        config_load_error += '\n'*3 + ''.join(
-            ["Errors about failed RPC connections usually mean an incorrectly ",
-             "configured instance of Bitcoin Core (e.g. it hasn't been started ",
-             "or the rpc ports are not correct in your joinmarket.cfg or your ",
-             "bitcoin.conf file)."
-             ])
-    JMQtMessageBox(None, config_load_error, mbtype='crit', title='failed to load')
-    sys.exit(EXIT_FAILURE)
-# Only partial functionality (see wallet info, change config) is possible
-# without a blockchain interface.
-if jm_single().bc_interface is None:
-    blockchain_warning = ''.join([
-        "No blockchain source currently configured. ",
-        "You will be able to see wallet information and change configuration ",
-        "but other functionality will be limited. ",
-        "Go to the 'Settings' tab and configure blockchain settings there."])
-    JMQtMessageBox(None, blockchain_warning, mbtype='warn',
-        title='No blockchain source')
-
 async def refuse_if_non_segwit_wallet():
-    #refuse to load non-segwit wallet (needs extra work in wallet-utils).
+    # refuse to load non-segwit wallet (needs extra work in wallet-utils).
     if not jm_single().config.get("POLICY", "segwit") == "true":
         wallet_load_error = ''.join([
             "Joinmarket-Qt only supports segwit based wallets, ",
@@ -2582,9 +2549,6 @@ async def refuse_if_non_segwit_wallet():
                              title='Incompatible wallet type')
         sys.exit(EXIT_FAILURE)
 
-update_config_for_gui()
-
-check_and_start_tor()
 
 async def onTabChange(i, tabWidget):
     """ Respond to change of tab.
@@ -2595,27 +2559,61 @@ async def onTabChange(i, tabWidget):
     if i == 2:
         await tabWidget.widget(2).updateUtxos()
 
-#to allow testing of confirm/unconfirm callback for multiple txs
-if isinstance(jm_single().bc_interface, RegtestBitcoinCoreInterface):
-    jm_single().bc_interface.tick_forward_chain_interval = 10
-    jm_single().bc_interface.simulating = True
-    jm_single().maker_timeout_sec = 15
-    #trigger start with a fake tx
-    jm_single().bc_interface.pushtx(b"\x00"*20)
-
-logsdir = os.path.join(jm_single().datadir, "logs")
-#tumble log will not always be used, but is made available anyway:
-tumble_log = get_tumble_log(logsdir)
-#ignored makers list persisted across entire app run
-ignored_makers = []
-appWindowTitle = 'JoinMarketQt'
-from twisted.internet import reactor
-reactor.runReturn()
-mainWindow = JMMainWindow(reactor)
-
 
 async def main():
+    global logsdir, tumble_log, mainWindow
+
+    parser = OptionParser(usage='usage: %prog [options]')
+    add_base_options(parser)
+    # wallet related base options are not applicable:
+    parser.remove_option("--recoversync")
+    parser.remove_option("--wallet-password-stdin")
+    (options, args) = parser.parse_args()
+
+    config_load_error = False
+    try:
+        load_program_config(config_path=options.datadir)
+    except Exception as e:
+        config_load_error = "Failed to setup joinmarket: "+repr(e)
+        if "RPC" in repr(e):
+            config_load_error += '\n'*3 + ''.join(
+                ["Errors about failed RPC connections usually mean an incorrectly ",
+                 "configured instance of Bitcoin Core (e.g. it hasn't been started ",
+                 "or the rpc ports are not correct in your joinmarket.cfg or your ",
+                 "bitcoin.conf file)."
+                 ])
+        await JMQtMessageBox(None, config_load_error,
+                             mbtype='crit', title='failed to load')
+        sys.exit(EXIT_FAILURE)
+    # Only partial functionality (see wallet info, change config) is possible
+    # without a blockchain interface.
+    if jm_single().bc_interface is None:
+        blockchain_warning = ''.join([
+            "No blockchain source currently configured. ",
+            "You will be able to see wallet information and change configuration ",
+            "but other functionality will be limited. ",
+            "Go to the 'Settings' tab and configure blockchain settings there."])
+        await JMQtMessageBox(None, blockchain_warning,
+                             mbtype='warn', title='No blockchain source')
+
     await refuse_if_non_segwit_wallet()
+
+    update_config_for_gui()
+
+    check_and_start_tor()
+
+    # to allow testing of confirm/unconfirm callback for multiple txs
+    if isinstance(jm_single().bc_interface, RegtestBitcoinCoreInterface):
+        jm_single().bc_interface.tick_forward_chain_interval = 10
+        jm_single().bc_interface.simulating = True
+        jm_single().maker_timeout_sec = 15
+        # trigger start with a fake tx
+        jm_single().bc_interface.pushtx(b"\x00"*20)
+
+    logsdir = os.path.join(jm_single().datadir, "logs")
+    # tumble log will not always be used, but is made available anyway:
+    tumble_log = get_tumble_log(logsdir)
+
     tabWidget = QTabWidget(mainWindow)
     jm_wallet_tab = JMWalletTab()
     await jm_wallet_tab.async_initUI()
@@ -2656,7 +2654,21 @@ async def main():
     set_custom_stop_reactor(qt_shutdown)
 
     # Upon launching the app, ask the user to choose a wallet to open
-    await mainWindow.openWallet()
+    # await mainWindow.openWallet()
 
-QtAsyncio.run(coro=main(), handle_sigint=True, debug=True)
-# sys.exit(app.exec_())  # FIXME?
+
+logsdir = None
+tumble_log = None
+# ignored makers list persisted across entire app run
+ignored_makers = []
+appWindowTitle = 'JoinMarketQt'
+
+from twisted.internet import reactor
+mainWindow = JMMainWindow(reactor)
+#mainWindow.show()
+reactor.runReturn()
+
+import PySide6.QtAsyncio as QtAsyncio
+exit_status = QtAsyncio.run(
+    coro=main(), keep_running=True, handle_sigint=True, debug=False)
+sys.exit(exit_status)

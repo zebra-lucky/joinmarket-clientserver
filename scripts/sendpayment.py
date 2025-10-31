@@ -388,12 +388,21 @@ async def main():
     if bip78url:
         # TODO sanity check wallet type is segwit
         manager = parse_payjoin_setup(args[1], wallet_service, options.mixdepth)
-        reactor.callWhenRunning(send_payjoin, manager)
         # JM is default, so must be switched off explicitly in this call:
         start_reactor(dhost, dport, bip78=True, jm_coinjoin=False,
                       daemon=daemon, gui=True)
+        wait_seconds = 180
+        while wait_seconds > 0:
+            if not reactor.running:
+                await asyncio.sleep(1)
+                wait_seconds -= 1
+                continue
+            break
+        if reactor.running:
+            await send_payjoin(manager)
+        else:
+            raise Exception("Reactor is not running for long time")
         return
-
     else:
         taker = Taker(wallet_service,
                       schedule,

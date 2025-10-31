@@ -22,6 +22,8 @@ fallbackfee=0.0002
 # getrawtransaction. This data is need to perform signing of P2TR inputs.
 txindex=1
 ```
+**NOTE for TAPROOT/FROST**: keep attention to the option `txindex`,
+wchich is now required in the `bitcoin.conf`
 
 (any random password is fine of course). It is also advisable to wipe ~/.bitcoin/regtest first, in case it gets large and slow to process.
 

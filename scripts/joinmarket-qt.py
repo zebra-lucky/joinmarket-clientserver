@@ -56,7 +56,7 @@ JM_GUI_VERSION = '33'
 
 from jmbase import get_log, stop_reactor, set_custom_stop_reactor, bintohex
 from jmbase.support import EXIT_FAILURE, utxo_to_utxostr,\
-    hextobin, JM_CORE_VERSION
+    hextobin, JM_CORE_VERSION, twisted_sys_exit
 import jmbitcoin as btc
 from jmclient import load_program_config, get_network, update_persist_config,\
     open_test_wallet_maybe, get_wallet_path,\
@@ -2548,7 +2548,7 @@ async def refuse_if_non_segwit_wallet():
             "of the field `segwit` in the `POLICY` section."])
         await JMQtMessageBox(None, wallet_load_error, mbtype='crit',
                              title='Incompatible wallet type')
-        sys.exit(EXIT_FAILURE)
+        twisted_sys_exit(EXIT_FAILURE)
 
 
 async def onTabChange(i, tabWidget):
@@ -2561,8 +2561,21 @@ async def onTabChange(i, tabWidget):
         await tabWidget.widget(2).updateUtxos()
 
 
+def qt_exception_handler(context):
+    exc = context['exception']
+    if isinstance(exc, SystemExit):
+        raise exc
+    if context["message"]:
+        print(f"{context['message']} from task {context['task']._name},"
+              "read the following traceback:")
+        print(context["traceback"])
+
+
 async def main():
     global logsdir, tumble_log, mainWindow
+
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(qt_exception_handler)
 
     parser = OptionParser(usage='usage: %prog [options]')
     add_base_options(parser)
@@ -2585,7 +2598,7 @@ async def main():
                  ])
         await JMQtMessageBox(None, config_load_error,
                              mbtype='crit', title='failed to load')
-        sys.exit(EXIT_FAILURE)
+        twisted_sys_exit(EXIT_FAILURE)
     # Only partial functionality (see wallet info, change config) is possible
     # without a blockchain interface.
     if jm_single().bc_interface is None:
@@ -2655,7 +2668,7 @@ async def main():
     set_custom_stop_reactor(qt_shutdown)
 
     # Upon launching the app, ask the user to choose a wallet to open
-    # await mainWindow.openWallet()
+    await mainWindow.openWallet()
 
 
 logsdir = None
@@ -2666,10 +2679,8 @@ appWindowTitle = 'JoinMarketQt'
 
 from twisted.internet import reactor
 mainWindow = JMMainWindow(reactor)
-#mainWindow.show()
 reactor.runReturn()
 
 import PySide6.QtAsyncio as QtAsyncio
-exit_status = QtAsyncio.run(
-    coro=main(), keep_running=True, handle_sigint=True, debug=False)
-sys.exit(exit_status)
+QtAsyncio.run(coro=main(), keep_running=True, quit_qapp=False,
+              handle_sigint=False, debug=True)

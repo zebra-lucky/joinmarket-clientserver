@@ -17,11 +17,23 @@ Have a `bitcoin.conf` ready in some location, whose contents only need to be:
 rpcuser=bitcoinrpc
 rpcpassword=123456abcdef
 fallbackfee=0.0002
+
+# txindex options is need to get non-wallet transactions with
+# getrawtransaction. This data is need to perform signing of P2TR inputs.
+txindex=1
 ```
 
 (any random password is fine of course). It is also advisable to wipe ~/.bitcoin/regtest first, in case it gets large and slow to process.
 
 Then copy the `regtest_joinmarket.cfg` file from the `test/` directory to the `joinmarket-clientserver/` directory and rename it to `joinmarket.cfg`; you probably won't need to change anything in the file except perhaps the above password, and the `native` setting if you're doing bech32 wallet tests.
+
+**NOTE for TAPROOT**: copy `regtest_taproot_joinmarket.cfg` file
+from `test/` directory to the `joinmarket-clientserver/test_taproot` directory
+and and rename it to `joinmarket.cfg`
+
+**NOTE for FROST**: copy `regtest_frost_joinmarket.cfg` file
+from `test/` directory to the `joinmarket-clientserver/test_frost` directory
+and and rename it to `joinmarket.cfg`
 
 Run the test suite via pytest:
 

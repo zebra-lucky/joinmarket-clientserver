@@ -925,10 +925,10 @@ class SpendTab(QWidget):
             self.amountInput.setEnabled(False)
             self.changeInput.setEnabled(False)
             self.startButton.setEnabled(False)
-            d = task.deferLater(reactor, 0.0, send_payjoin, manager,
-                    accept_callback=self.checkDirectSend,
-                    info_callback=self.infoDirectSend)
-            d.addCallback(self.clearFields)
+            await send_payjoin(manager,
+                               accept_callback=self.checkDirectSend,
+                               info_callback=self.infoDirectSend)
+            self.clearFields(None)
             return
 
         # for coinjoin sends no point to send below dust threshold, likely

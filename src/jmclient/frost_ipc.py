@@ -164,7 +164,7 @@ class FrostIPCClient(IPCBase):
             self.sr, self.sw = await asyncio.open_unix_connection(
                 self.sock_path)
             self.loop.create_task(self.process_msgs())
-        except ConnectionRefusedError as e:
+        except (FileNotFoundError, ConnectionRefusedError) as e:
             jmprint('No servefrost socket found. Run wallet-tool.py '
                     'wallet.jmdat servefrost in separate console.', "error")
             twisted_sys_exit(EXIT_FAILURE)

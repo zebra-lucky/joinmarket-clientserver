@@ -542,7 +542,7 @@ class BTC_P2TR_FROST(BTC_P2TR):
         spent_outputs = kwargs['spent_outputs']
         sighash = SignatureHashSchnorr(tx, i, spent_outputs)
         mixdepth, address_type, index = wallet.get_details(path)
-        sig, pubkey, tweaked_pubkey = await wallet.ipc_client.frost_sign(
+        sig, pubkey, tweaked_pubkey = await wallet.ipc_client.frost_req(
             mixdepth, address_type, index, sighash)
         if not sig:
             return None, "FROST signing failed"

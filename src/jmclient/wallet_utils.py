@@ -1962,7 +1962,7 @@ async def wallet_tool_main(wallet_root_path):
         msg = 'testmsg'
         md = address_type = index = 0
         msghash = sha256(msg.encode()).digest()
-        sig, pubkey, tweaked_pubkey = await wallet.ipc_client.frost_sign(
+        sig, pubkey, tweaked_pubkey = await wallet.ipc_client.frost_req(
             md, address_type, index, msghash)
         verify_pubkey = XOnlyPubKey(tweaked_pubkey[1:])
         if verify_pubkey.verify_schnorr(msghash, sig):

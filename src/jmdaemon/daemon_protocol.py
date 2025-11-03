@@ -26,9 +26,11 @@ from twisted.web import server
 from txtorcon.socks import HostUnreachableError
 from twisted.python import log
 import urllib.parse as urlparse
+from collections import defaultdict
 from urllib.parse import urlencode
 import json
 import threading
+import time
 import os
 from io import BytesIO
 import copy
@@ -485,6 +487,32 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
         self.use_fidelity_bond = False
         self.offerlist = None
         self.kp = None
+        self.frost_crypto_boxes = {}
+        self.frost_expected_msgs = defaultdict(lambda: defaultdict(dict))
+        self.frost_cleanup_loop = task.LoopingCall(self.frost_cleanup)
+
+    def frost_cleanup(self):
+        now = time.time()
+        boxes = self.frost_crypto_boxes
+        cleanup_list = []
+        for nick, sessions in boxes.items():
+            for session_id, box in sessions.items():
+                if now - box['created'] > 120:
+                    cleanup_list.append((nick, session_id))
+        for nick, session_id in cleanup_list:
+            boxes[nick].pop(session_id)
+            if not boxes[nick]:
+                boxes.pop(nick)
+        msgs = self.frost_expected_msgs
+        cleanup_list = []
+        for nick, cmds in msgs.items():
+            for cmd, cmd_data in cmds.items():
+                if now - cmd_data['created'] > 120:
+                    cleanup_list.append((nick, cmd))
+        for nick, cmd in cleanup_list:
+            msgs[nick].pop(cmd)
+            if not msgs[nick]:
+                msgs.pop(nick)
 
     def checkClientResponse(self, response):
         """A generic check of client acceptance; any failure
@@ -555,6 +583,8 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
                                               self.on_dkgfinalized,
                                               self.on_dkgcmsg1,
                                               self.on_dkgcmsg2,
+                                              self.on_frostreq,
+                                              self.on_frostack,
                                               self.on_frostinit,
                                               self.on_frostround1,
                                               self.on_frostround2,
@@ -582,7 +612,7 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
         assert self.jm_state == 0
         self.role = role
         self.crypto_boxes = {}
-        self.kp = init_keypair()
+        self.kp = init_keypair()  # FIXME not used by maker, mv to taker code?
         d = self.callRemote(JMSetupDone)
         self.defaultCallbacks(d)
         #Request orderbook here, on explicit setup request from client,
@@ -658,29 +688,114 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
 
     """FROST specific responders
     """
+    @JMFROSTReq.responder
+    def on_JM_FROST_REQ(self, hostpubkeyhash, sig, session_id):
+        if not self.frost_cleanup_loop.running:
+            self.frost_cleanup_loop.start(30.0)
+        boxes = self.frost_crypto_boxes
+        nick_boxes = boxes.get(None, {})  # None for self
+        session_box = nick_boxes.get(session_id, {})
+        if session_box:
+            log.msg(f'on_JM_FROST_REQ: session_id "{session_id}" '
+                    f'setup is incorrect. '
+                    f'FROST request aborted.')
+            return {'accepted': True}
+        kp = init_keypair()
+        session_box['kp'] = kp
+        session_box['created'] = time.time()
+        nick_boxes[session_id] = session_box
+        boxes[None] = nick_boxes  # None for self
+        dh_pubk = kp.hex_pk().decode('ascii')
+        req_msg = f'!frostreq {hostpubkeyhash} {sig} {session_id} {dh_pubk}'
+        self.mcc.pubmsg(req_msg)
+        return {'accepted': True}
+
+    @JMFROSTAck.responder
+    def on_JM_FROST_ACK(self, nick, hostpubkeyhash, sig, session_id):
+        boxes = self.frost_crypto_boxes
+        self_boxes = boxes.get(None, {})  # None for self
+        session_box = self_boxes.get(session_id, {})
+        if session_box:
+            log.msg(f'on_JM_FROST_ACK: session_id "{session_id}" '
+                    f'setup is incorrect. '
+                    f'FROST request aborted.')
+            return {'accepted': True}
+        kp = init_keypair()
+        session_box['kp'] = kp
+        session_box['created'] = time.time()
+        self_boxes[session_id] = session_box
+        boxes[None] = self_boxes  # None for self
+
+        nick_boxes = boxes.get(nick, {})
+        nick_session_box = nick_boxes.get(session_id, {})
+        if not nick_session_box:
+            log.msg(f'on_JM_FROST_ACK: nick {nick}, session_id "{session_id}" '
+                    f'setup is incorrect. '
+                    f'FROST request aborted.')
+            return {'accepted': True}
+        try:
+            nick_dh_pubk = nick_session_box['dh_pubk']
+            nick_session_box['crypto_box'] = as_init_encryption(
+                kp, init_pubkey(nick_dh_pubk))
+        except NaclError as e:
+            log.msg('on frostround1: error creating crypto_box. '
+                        'FROST session aborted')
+            return {'accepted': True}
+
+        self.frost_expected_msgs[nick]['frostinit'] = {
+            'session_id': session_id,
+            'created': time.time(),
+        }
+        dh_pubk = kp.hex_pk().decode('ascii')
+        ack_msg = f'{hostpubkeyhash} {sig} {session_id} {dh_pubk}'
+        self.mcc.prepare_privmsg(nick, 'frostack', ack_msg)
+        return {'accepted': True}
+
     @JMFROSTInit.responder
-    def on_JM_FROST_INIT(self, hostpubkeyhash, session_id, sig):
-        self.mcc.pubmsg(f'!frostinit {hostpubkeyhash} {session_id} {sig}')
+    def on_JM_FROST_INIT(self, nick, session_id):
+        self.frost_expected_msgs[nick]['frostround1'] = {
+            'session_id': session_id,
+            'created': time.time(),
+        }
+        init_msg = f'{session_id}'
+        self.mcc.prepare_privmsg(nick, 'frostinit', init_msg)
         return {'accepted': True}
 
     @JMFROSTRound1.responder
-    def on_JM_FROST_ROUND1(self, nick, hostpubkeyhash,
-                           session_id, sig, pub_nonce):
-        msg = f'{hostpubkeyhash} {session_id} {sig} {pub_nonce}'
-        self.mcc.prepare_privmsg(nick, "frostround1", msg)
+    def on_JM_FROST_ROUND1(self, nick, hostpubkeyhash, session_id, pub_nonce):
+        self.frost_expected_msgs[nick]['frostagg1'] = {
+            'session_id': session_id,
+            'created': time.time(),
+        }
+        round1_msg = f'{session_id} {hostpubkeyhash} {pub_nonce}'
+        self.mcc.prepare_privmsg(nick, "frostround1", round1_msg)
         return {'accepted': True}
 
     @JMFROSTAgg1.responder
     def on_JM_FROST_AGG1(self, nick, session_id,
                          nonce_agg, dkg_session_id, ids, msg):
-        msg = f'{session_id} {nonce_agg} {dkg_session_id} {ids} {msg}'
-        self.mcc.prepare_privmsg(nick, "frostagg1", msg)
+        self.frost_expected_msgs[nick]['frostround2'] = {
+            'session_id': session_id,
+            'created': time.time(),
+        }
+        agg1_msg = f'{session_id} {nonce_agg} {dkg_session_id} {ids} {msg}'
+        self.mcc.prepare_privmsg(nick, "frostagg1", agg1_msg)
         return {'accepted': True}
 
     @JMFROSTRound2.responder
     def on_JM_FROST_ROUND2(self, nick, session_id, partial_sig):
         msg = f'{session_id} {partial_sig}'
         self.mcc.prepare_privmsg(nick, "frostround2", msg)
+        # cleanup frost_crypto_boxes
+        boxes = self.frost_crypto_boxes
+        cleanup_list = []
+        for nick, sessions in boxes.items():
+            if session_id in sessions:
+                cleanup_list.append((nick, session_id))
+        for nick, session_id in cleanup_list:
+            boxes[nick].pop(session_id)
+            if not boxes[nick]:
+                boxes.pop(nick)
         return {'accepted': True}
 
 
@@ -848,16 +963,60 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
                             ext_recovery=ext_recovery)
         self.defaultCallbacks(d)
 
-    def on_frostinit(self, nick, hostpubkeyhash, session_id, sig):
-        d = self.callRemote(JMFROSTInitSeen,
+    def on_frostreq(self, nick, hostpubkeyhash, sig, session_id, dh_pubk):
+        boxes = self.frost_crypto_boxes
+        nick_boxes = boxes.get(nick, {})
+        session_box = nick_boxes.get(session_id, {})
+        if not session_box and not 'dh_pubk' in session_box:
+            session_box['dh_pubk'] = dh_pubk
+            session_box['created'] = time.time()
+            nick_boxes[session_id] = session_box
+            boxes[nick] = nick_boxes
+
+            d = self.callRemote(JMFROSTReqSeen,
+                                nick=nick, hostpubkeyhash=hostpubkeyhash,
+                                sig=sig, session_id=session_id)
+            self.defaultCallbacks(d)
+
+    def on_frostack(self, nick, hostpubkeyhash, sig, session_id, dh_pubk):
+        boxes = self.frost_crypto_boxes
+        nick_boxes = boxes.get(nick, {})
+        session_box = nick_boxes.get(session_id, {})
+        if not session_box and not 'dh_pubk' in session_box:
+            session_box['dh_pubk'] = dh_pubk
+            session_box['created'] = time.time()
+            nick_boxes[session_id] = session_box
+            boxes[nick] = nick_boxes
+
+        self_boxes = boxes.get(None, {})
+        self_session_box = self_boxes.get(session_id, {})
+        if not self_session_box or not 'kp' in self_session_box:
+            log.msg(f'on_frostack: session_id "{session_id}" '
+                    f' setup is incorrect. '
+                    f'FROST session aborted.')
+            return
+        try:
+            kp = self_session_box['kp']
+            session_box['crypto_box'] = as_init_encryption(
+                kp, init_pubkey(dh_pubk))
+        except NaclError as e:
+            log.msg('on frostround1: error creating crypto_box. '
+                    'FROST session aborted')
+            return
+        d = self.callRemote(JMFROSTAckSeen,
                             nick=nick, hostpubkeyhash=hostpubkeyhash,
-                            session_id=session_id, sig=sig)
+                            sig=sig, session_id=session_id)
         self.defaultCallbacks(d)
 
-    def on_frostround1(self, nick, hostpubkeyhash, session_id, sig, pub_nonce):
+    def on_frostinit(self, nick, session_id):
+        d = self.callRemote(JMFROSTInitSeen,
+                            nick=nick, session_id=session_id)
+        self.defaultCallbacks(d)
+
+    def on_frostround1(self, nick, session_id, hostpubkeyhash, pub_nonce):
         d = self.callRemote(JMFROSTRound1Seen,
-                            nick=nick, hostpubkeyhash=hostpubkeyhash,
-                            session_id=session_id, sig=sig,
+                            nick=nick, session_id=session_id,
+                            hostpubkeyhash=hostpubkeyhash,
                             pub_nonce=pub_nonce)
         self.defaultCallbacks(d)
 
@@ -866,6 +1025,16 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
                             nick=nick, session_id=session_id,
                             partial_sig=partial_sig)
         self.defaultCallbacks(d)
+        # cleanup frost_crypto_boxes
+        boxes = self.frost_crypto_boxes
+        cleanup_list = []
+        for nick, sessions in boxes.items():
+            if session_id in sessions:
+                cleanup_list.append((nick, session_id))
+        for nick, session_id in cleanup_list:
+            boxes[nick].pop(session_id)
+            if not boxes[nick]:
+                boxes.pop(nick)
 
     def on_frostagg1(self, nick, session_id,
                      nonce_agg, dkg_session_id, ids, msg):
@@ -1169,7 +1338,9 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
         """Retrieve the libsodium box object for the counterparty;
         stored differently for Taker and Maker
         """
-        if nick in self.crypto_boxes and self.crypto_boxes[nick] != None:
+        if nick in self.frost_crypto_boxes:
+            return self.frost_crypto_boxes[nick]
+        elif nick in self.crypto_boxes and self.crypto_boxes[nick] != None:
             return self.crypto_boxes[nick][1]
         elif nick in self.active_orders and self.active_orders[nick] != None \
              and "crypto_box" in self.active_orders[nick]:

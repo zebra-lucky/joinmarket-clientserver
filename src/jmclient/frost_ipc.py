@@ -77,9 +77,9 @@ class FrostIPCServer(IPCBase):
                 if cmd == 'get_dkg_pubkey':
                     task = self.loop.create_task(
                         self.on_get_dkg_pubkey(msg_id, *data))
-                elif cmd == 'frost_sign':
+                elif cmd == 'frost_req':
                     task = self.loop.create_task(
-                        self.on_frost_sign(msg_id, *data))
+                        self.on_frost_req(msg_id, *data))
                 if task:
                     self.tasks.add(task)
             except Exception as e:
@@ -118,7 +118,7 @@ class FrostIPCServer(IPCBase):
         except Exception as e:
             jlog.error(f'FrostIPCServer.send_dkg_pubkey: {repr(e)}')
 
-    async def on_frost_sign(self, msg_id, mixdepth, address_type, index,
+    async def on_frost_req(self, msg_id, mixdepth, address_type, index,
                             sighash):
         try:
             wallet = self.wallet
@@ -126,12 +126,12 @@ class FrostIPCServer(IPCBase):
             frost_client = wallet.client_factory.client
             dkg = wallet.dkg
             dkg_session_id = dkg.find_session(mixdepth, address_type, index)
-            session_id, _, _ = client.frost_init(dkg_session_id, sighash)
+            session_id, _, _ = client.frost_req(dkg_session_id, sighash)
             sig, tweaked_pubkey = await frost_client.wait_on_sig(session_id)
             pubkey = dkg.find_dkg_pubkey(mixdepth, address_type, index)
             await self.send_frost_sig(msg_id, sig, pubkey, tweaked_pubkey)
         except Exception as e:
-            jlog.error(f'FrostIPCServer.on_frost_sign: {repr(e)}')
+            jlog.error(f'FrostIPCServer.on_frost_req: {repr(e)}')
             await self.send_frost_sig(msg_id, None, None, None)
 
     async def send_frost_sig(self, msg_id, sig, pubkey, tweaked_pubkey):
@@ -232,15 +232,15 @@ class FrostIPCClient(IPCBase):
         except Exception as e:
             jlog.error(f'FrostIPCClient.get_dkg_pubkey: {repr(e)}')
 
-    async def frost_sign(self, mixdepth, address_type, index, sighash):
-        jlog.debug(f'FrostIPCClient.frost_sign for mixdepth={mixdepth}, '
+    async def frost_req(self, mixdepth, address_type, index, sighash):
+        jlog.debug(f'FrostIPCClient.frost_req for mixdepth={mixdepth}, '
                    f'address_type={address_type}, index={index}, '
                    f'sighash={sighash.hex()}')
         try:
             self.msg_id += 1
             msg_dict = {
                 'msg_id': self.msg_id,
-                'cmd': 'frost_sign',
+                'cmd': 'frost_req',
                 'data': (mixdepth, address_type, index, sighash),
             }
             self.sw.write(self.encrypt_msg(msg_dict))
@@ -251,16 +251,16 @@ class FrostIPCClient(IPCBase):
             sig, pubkey, tweaked_pubkey = fut.result()
             if sig is None:
                 jlog.error(
-                    f'FrostIPCClient.frost_sign got None sig value from '
+                    f'FrostIPCClient.frost_req got None sig value from '
                     f'FrostIPCServer for mixdepth={mixdepth}, '
                     f'address_type={address_type}, index={index}, '
                     f'sighash={sighash.hex()}')
                 return sig, pubkey, tweaked_pubkey
             jlog.debug(
-                f'FrostIPCClient.frost_sign successfully got signature '
+                f'FrostIPCClient.frost_req successfully got signature '
                 f'for mixdepth={mixdepth}, address_type={address_type}, '
                 f'index={index}, sighash={sighash.hex()}')
             return sig, pubkey, tweaked_pubkey
         except Exception as e:
-            jlog.error(f'FrostIPCClient.frost_sign: {repr(e)}')
+            jlog.error(f'FrostIPCClient.frost_req: {repr(e)}')
             return None, None, None

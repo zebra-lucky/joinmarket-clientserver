@@ -170,43 +170,62 @@ class DummyFrostJMClientProtocol:
         log.debug(f'Coordinator get dkgfinalized')
         client.on_dkg_finalized(nick, session_id)
 
-    def frost_init(self, dkg_session_id, msg_bytes):
-        log.debug(f'Coordinator call frost_init')
+    def frost_req(self, dkg_session_id, msg_bytes):
+        log.debug(f'Coordinator call frost_req')
         client = self.factory.client
-        hostpubkeyhash, session_id, sig = client.frost_init(
+        hostpubkeyhash, sig, session_id = client.frost_req(
             dkg_session_id, msg_bytes)
         coordinator = client.frost_coordinators.get(session_id)
         session = client.frost_sessions.get(session_id)
         if session_id and session and coordinator:
-            coordinator.frost_init_sec = time.time()
+            coordinator.frost_req_sec = time.time()
             for _, pc in self.party_clients.items():
 
-                async def on_frost_init(pc, nick, hostpubkeyhash,
-                                        session_id, sig):
-                    await pc.on_frost_init(
-                        nick, hostpubkeyhash, session_id, sig)
+                async def on_frost_req(pc, nick, hostpubkeyhash,
+                                       sig, session_id):
+                    await pc.on_frost_req(
+                        nick, hostpubkeyhash, sig, session_id)
 
-                asyncio.create_task(on_frost_init(
-                    pc, self.nick, hostpubkeyhash, session_id, sig))
+                asyncio.create_task(on_frost_req(
+                    pc, self.nick, hostpubkeyhash, sig, session_id))
         return session_id, coordinator, session
 
-    async def on_frost_init(self, nick, hostpubkeyhash, session_id, sig):
+    async def on_frost_req(self, nick, hostpubkeyhash, sig, session_id):
         client = self.factory.client
         (
-            nick,
+            nick2,
             hostpubkeyhash,
-            session_id,
             sig,
+            session_id,
+        ) = client.on_frost_req(nick, hostpubkeyhash, sig, session_id)
+        if sig:
+            pc = self.party_clients[nick]
+            session_id = bytes.fromhex(session_id)
+            await pc.on_frost_ack(
+                self.nick, hostpubkeyhash, sig, session_id)
+
+    async def on_frost_ack(self, nick, hostpubkeyhash, sig, session_id):
+        client = self.factory.client
+        assert client.on_frost_ack(nick, hostpubkeyhash, sig, session_id)
+        pc = self.party_clients[nick]
+        await pc.on_frost_init(self.nick, session_id)
+
+    async def on_frost_init(self, nick, session_id):
+        client = self.factory.client
+        (
+            nick2,
+            session_id,
+            hostpubkeyhash,
             pub_nonce
-        ) = client.on_frost_init(nick, hostpubkeyhash, session_id, sig)
+        ) = client.on_frost_init(nick, session_id)
         if pub_nonce:
             pc = self.party_clients[nick]
             session_id = bytes.fromhex(session_id)
             await pc.on_frost_round1(
-                self.nick, hostpubkeyhash, session_id, sig, pub_nonce)
+                self.nick, session_id, hostpubkeyhash, pub_nonce)
 
-    async def on_frost_round1(self, nick, hostpubkeyhash,
-                              session_id, sig, pub_nonce):
+    async def on_frost_round1(self, nick, session_id,
+                              hostpubkeyhash, pub_nonce):
         client = self.factory.client
         (
             ready_nicks,
@@ -215,19 +234,14 @@ class DummyFrostJMClientProtocol:
             ids,
             msg
         ) = client.on_frost_round1(
-            nick, hostpubkeyhash, session_id, sig, pub_nonce)
+            nick, session_id, hostpubkeyhash, pub_nonce)
         if ready_nicks and nonce_agg:
             for party_nick in ready_nicks:
                 pc = self.party_clients[nick]
-                self.frost_agg1(pc, self.nick, session_id, nonce_agg,
-                                dkg_session_id, ids, msg)
+                await pc.on_frost_agg1(
+                    self.nick, session_id, nonce_agg, dkg_session_id, ids, msg)
 
-    def frost_agg1(self, pc, nick, session_id,
-                   nonce_agg, dkg_session_id, ids, msg):
-        pc.on_frost_agg1(
-            self.nick, session_id, nonce_agg, dkg_session_id, ids, msg)
-
-    def on_frost_agg1(self, nick, session_id,
+    async def on_frost_agg1(self, nick, session_id,
                       nonce_agg, dkg_session_id, ids, msg):
         client = self.factory.client
         session = client.frost_sessions.get(session_id)
@@ -239,11 +253,11 @@ class DummyFrostJMClientProtocol:
                 session_id, nonce_agg, dkg_session_id, ids, msg)
             if partial_sig:
                 pc = self.party_clients[nick]
-                pc.on_frost_round2(self.nick, session_id, partial_sig)
+                await pc.on_frost_round2(self.nick, session_id, partial_sig)
         else:
             log.error(f'on_frost_agg1: not coordinator nick {nick}')
 
-    def on_frost_round2(self, nick, session_id, partial_sig):
+    async def on_frost_round2(self, nick, session_id, partial_sig):
         client = self.factory.client
         sig = client.on_frost_round2(nick, session_id, partial_sig)
         if sig:
@@ -333,9 +347,10 @@ class FrostIPCClientTestCase(FrostIPCTestCaseBase):
         pubkeys = list(dkg._dkg_pubkey.values())
         assert pubkey and pubkey in pubkeys
 
-    async def test_frost_sign(self):
+    async def test_frost_req(self):
         sighash = bytes.fromhex('01020304'*8)
-        sig, pubkey, tweaked_pubkey = await self.ipcc.frost_sign(0, 0, 0, sighash)
+        sig, pubkey, tweaked_pubkey = await self.ipcc.frost_req(
+            0, 0, 0, sighash)
         assert sig and len(sig) == 64
         assert pubkey and len(pubkey) == 33
         assert tweaked_pubkey and len(tweaked_pubkey) == 33

@@ -127,20 +127,32 @@ class JMDKGFinalized(JMCommand):
 
 
 """Messages used by FROST parties"""
+class JMFROSTReq(JMCommand):
+    arguments = [
+        (b'hostpubkeyhash', Unicode()),
+        (b'sig', Unicode()),
+        (b'session_id', Unicode()),
+    ]
+
+class JMFROSTAck(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'sig', Unicode()),
+        (b'session_id', Unicode()),
+    ]
 
 class JMFROSTInit(JMCommand):
     arguments = [
-        (b'hostpubkeyhash', Unicode()),
+        (b'nick', Unicode()),
         (b'session_id', Unicode()),
-        (b'sig', Unicode()),
     ]
 
 class JMFROSTRound1(JMCommand):
     arguments = [
         (b'nick', Unicode()),
-        (b'hostpubkeyhash', Unicode()),
         (b'session_id', Unicode()),
-        (b'sig', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
         (b'pub_nonce', Unicode()),
     ]
 
@@ -327,21 +339,33 @@ class JMDKGCMsg2Seen(JMCommand):
 
 
 """Messages used by FROST parties"""
+class JMFROSTReqSeen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'sig', Unicode()),
+        (b'session_id', Unicode()),
+    ]
+
+class JMFROSTAckSeen(JMCommand):
+    arguments = [
+        (b'nick', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
+        (b'sig', Unicode()),
+        (b'session_id', Unicode()),
+    ]
 
 class JMFROSTInitSeen(JMCommand):
     arguments = [
         (b'nick', Unicode()),
-        (b'hostpubkeyhash', Unicode()),
         (b'session_id', Unicode()),
-        (b'sig', Unicode()),
     ]
 
 class JMFROSTRound1Seen(JMCommand):
     arguments = [
         (b'nick', Unicode()),
-        (b'hostpubkeyhash', Unicode()),
         (b'session_id', Unicode()),
-        (b'sig', Unicode()),
+        (b'hostpubkeyhash', Unicode()),
         (b'pub_nonce', Unicode()),
     ]
 

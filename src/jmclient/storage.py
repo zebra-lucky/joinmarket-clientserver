@@ -414,11 +414,11 @@ class DKGRecoveryStorage(object):
 
     @staticmethod
     def _serialize(data):
-        return bencoder.bencode(data)
+        return bencode_utf8(data)
 
     @staticmethod
     def _deserialize(data):
-        return bencoder.bdecode(data)
+        return bdecode(data)
 
     @staticmethod
     def _get_lock_filename(path: str) -> str:

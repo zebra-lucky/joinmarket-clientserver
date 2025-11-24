@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import bencoder
 import click
 import json
 from pprint import pprint
+from fastbencode import bdecode
 
 
 def debyte_list(lst):
@@ -45,10 +45,10 @@ def main(**kwargs):
     with open(input_file, 'rb') as fd:
         data = fd.read()
         if no_decode:
-            d = bencoder.bdecode(data[8:])
+            d = bdecode(data[8:])
             pprint(d)
         else:
-            d = debyte_dict(bencoder.bdecode(data[8:]))
+            d = debyte_dict(bdecode(data[8:]))
             print(json.dumps(d, indent=4))
 
 

@@ -5,7 +5,7 @@ from pprint import pprint
 
 from unittest import IsolatedAsyncioTestCase
 
-import bencoder
+from fastbencode import bdecode
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
@@ -240,7 +240,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase):
         ext_recovery_bytes = decrypt_ext_recovery(wlt._hostseckey,
                                                   ext_recovery)
 
-        saved_dkg = bencoder.bdecode(wlt._dkg_storage.file_data[8:])
+        saved_dkg = bdecode(wlt._dkg_storage.file_data[8:])
         STORAGE_KEY = DKGManager.STORAGE_KEY
         HOSTPUBKEYS_SUBKEY = DKGManager.HOSTPUBKEYS_SUBKEY
         PUBKEY_SUBKEY = DKGManager.PUBKEY_SUBKEY
@@ -256,12 +256,12 @@ class AsyncioTestCase(IsolatedAsyncioTestCase):
         assert saved_dkg[STORAGE_KEY][T_SUBKEY] == dict()
         assert saved_dkg[STORAGE_KEY][SESSIONS_SUBKEY] == dict()
 
-        saved_rec = bencoder.bdecode(wlt._recovery_storage.file_data[8:])
+        saved_rec = bdecode(wlt._recovery_storage.file_data[8:])
         assert saved_rec[b'dkg'] == dict()
 
         wlt.dkg.save()
 
-        saved_dkg = bencoder.bdecode(wlt._dkg_storage.file_data[8:])
+        saved_dkg = bdecode(wlt._dkg_storage.file_data[8:])
         assert set(saved_dkg[STORAGE_KEY][SECSHARE_SUBKEY].keys()) == set([
             b'\xaa'*32,
             b'\xbb'*32,
@@ -286,7 +286,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase):
             ext_recovery_bytes
         ])
 
-        saved_rec = bencoder.bdecode(wlt._recovery_storage.file_data[8:])
+        saved_rec = bdecode(wlt._recovery_storage.file_data[8:])
         RECOVERY_STORAGE_KEY = DKGManager.RECOVERY_STORAGE_KEY
         assert set(saved_rec[RECOVERY_STORAGE_KEY].keys()) == set([
             b'\xaa'*32,

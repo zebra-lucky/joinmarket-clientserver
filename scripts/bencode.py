@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import bencoder
 import click
 import json
 from pprint import pprint
+from fastbencode import bencode_utf8
 
 
 def enbyte_list(lst):
@@ -62,7 +62,7 @@ def main(**kwargs):
     data = enbyte_dict(data)
 
     with open(output_file, 'wb') as wfd:
-        wfd.write(MAGIC_UNENC + bencoder.bencode(data))
+        wfd.write(MAGIC_UNENC + bencode_utf8(data))
 
 
 if __name__ == '__main__':

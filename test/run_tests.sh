@@ -198,10 +198,10 @@ run_jm_tests ()
     [[ -f ./joinmarket.cfg ]] && unlink ./joinmarket.cfg
     [[ -f ./test_taproot/joinmarket.cfg ]] && unlink ./test_taproot/joinmarket.cfg
     [[ -f ./test_frost/joinmarket.cfg ]] && unlink ./test_frost/joinmarket.cfg
-    mkdir -p taproot frost
+    mkdir -p test_taproot test_frost
     ln -s ./test/regtest_joinmarket.cfg ./joinmarket.cfg
-    ln -s ./test/regtest_taproot_joinmarket.cfg ./test_taproot/joinmarket.cfg
-    ln -s ./test/regtest_frost_joinmarket.cfg ./test_frost/joinmarket.cfg
+    ln -s `realpath ./test/regtest_taproot_joinmarket.cfg` test_taproot/joinmarket.cfg
+    ln -s `realpath ./test/regtest_frost_joinmarket.cfg` ./test_frost/joinmarket.cfg
     orig_umask="$(umask -p)"
     umask 077
     rm -rf "${jm_test_datadir}"

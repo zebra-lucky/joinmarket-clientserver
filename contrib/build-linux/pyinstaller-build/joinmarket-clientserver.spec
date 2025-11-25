@@ -22,21 +22,20 @@ datas += [(f'{PROJECT_ROOT}/jmvenv/lib/python3.12/site-packages/'
 
 
 scripts = [
-    # 'scripts/add-utxo.py',
-    # 'scripts/bond-calculator.py',
-    # 'scripts/bumpfee.py',
-    # 'scripts/genwallet.py',
-    # 'scripts/jmwalletd.py',
-    # 'scripts/joinmarketd.py',
-    # 'scripts/joinmarket-qt.py',
-    # 'scripts/receive-payjoin.py',
-    # 'scripts/sendpayment.py',
-    # 'scripts/sendtomany.py',
-    'scripts/start-dn.py',
-    # 'scripts/tumbler.py',
-    #'scripts/wallet-tool.py',
-    # 'scripts/yg-privacyenhanced.py',
-    #'scripts/yield-generator-basic.py',
+    'scripts/add-utxo.py',
+    'scripts/bond-calculator.py',
+    'scripts/bumpfee.py',
+    'scripts/genwallet.py',
+    'scripts/jmwalletd.py',
+    'scripts/joinmarketd.py',
+    'scripts/joinmarket-qt.py',
+    'scripts/receive-payjoin.py',
+    'scripts/sendpayment.py',
+    'scripts/sendtomany.py',
+    'scripts/tumbler.py',
+    'scripts/wallet-tool.py',
+    'scripts/yg-privacyenhanced.py',
+    'scripts/yield-generator-basic.py',
 ]
 
 
@@ -80,6 +79,7 @@ for s in scripts:
         argv_emulation=False, target_arch=None, codesign_identity=None,
         entitlements_file=None,
     )
+
 
 coll = COLLECT(
     *list(exe.values()),

@@ -9,6 +9,8 @@ jobs:
   create_release:
     runs-on: ubuntu-24.04
     name: Create github release
+    permissions:
+      contents: write
     outputs:
       upload_url: >
         ${{ steps.get_release.outputs.upload_url ||
@@ -37,6 +39,8 @@ jobs:
     needs: create_release
     runs-on: ubuntu-24.04
     name: create PyInstaller build
+    permissions:
+      contents: write
     steps:
       - name: Set outputs for pkg_ver
         id: set_vars

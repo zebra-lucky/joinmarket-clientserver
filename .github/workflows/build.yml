@@ -38,13 +38,14 @@ jobs:
   build_with_pyinstaller:
     needs: create_release
     runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        python-version: ["3.12"]
     name: create PyInstaller build
     permissions:
       contents: write
     steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Set outputs for pkg_ver
         id: set_vars
         run: |

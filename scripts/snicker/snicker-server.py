@@ -159,8 +159,8 @@ class SNICKERServer(Resource):
                 bin_nonce = hextobin(nonce.decode('utf-8'))
                 base64.b64decode(encryptedtx)
             except:
-                log.warn("This proposal was not accepted: " + proposal.decode(
-                    "utf-8"))
+                log.warning("This proposal was not accepted: " +
+                            proposal.decode("utf-8"))
                 # give up immediately in case of format error:
                 return self.return_error(request, "Invalid request format",
                                          "invalid-request-format")
@@ -185,8 +185,8 @@ class SNICKERServer(Resource):
             self.cursor.execute('INSERT INTO {} VALUES(?, ?);'.format(
             database_table_name),proposal_to_add)
         except sqlite3.Error as e:
-            log.warn("Error inserting data into table: {}".format(
-                " ".join(e.args)))
+            log.warning("Error inserting data into table:"
+                        " {}".format(" ".join(e.args)))
             return False
         self.conn.commit()
         return True

@@ -61,7 +61,7 @@ class DummyFrostJMClientProtocol:
             if session_id is None:
                 session_id, _, session = self.dkg_init(*md_type_idx)
                 if session_id is None:
-                    log.warn('could not get session_id from dkg_init}')
+                    log.warning('could not get session_id from dkg_init}')
                     await asyncio.sleep(5)
                     continue
 

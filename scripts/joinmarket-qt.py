@@ -284,7 +284,8 @@ class SettingsTab(QDialog):
             log.debug('setting section: ' + section + ' and name: ' + oname +
                       ' to: ' + oval)
             if not update_persist_config(section, oname, oval):
-                log.warn("Unable to persist config change to file: " + str(section) + str(oname) + str(oval))
+                log.warning("Unable to persist config change to file: " +
+                            str(section) + str(oname) + str(oval))
 
         else:  #currently there is only QLineEdit
             log.debug('setting section: ' + section + ' and name: ' + str(t[
@@ -292,8 +293,9 @@ class SettingsTab(QDialog):
             if not update_persist_config(section, str(t[0].text()), str(t[1].text())):
                 # we don't include GUI as it's not required to be persisted:
                 if not section == "GUI":
-                    log.warn("Unable to persist config change to file: " + str(
-                        section) + str(t[0].text()) + str(t[1].text()))
+                    log.warning("Unable to persist config change to file: " +
+                                str(section) + str(t[0].text()) +
+                                str(t[1].text()))
             if str(t[0].text()) == 'blockchain_source':
                 jm_single().bc_interface = get_blockchain_interface_instance(
                     jm_single().config)

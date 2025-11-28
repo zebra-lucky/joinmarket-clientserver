@@ -77,8 +77,9 @@ class YieldGeneratorPrivacyEnhanced(YieldGeneratorBasic):
             self.minsize * (1 - float(self.size_factor)),
             self.minsize * (1 + float(self.size_factor))))
         if randomize_minsize < jm_single().DUST_THRESHOLD:
-            jlog.warn("Minsize was randomized to below dust; resetting to dust "
-                      "threshold: " + amount_to_str(jm_single().DUST_THRESHOLD))
+            jlog.warning("Minsize was randomized to below dust; resetting to"
+                         " dust threshold: " +
+                         amount_to_str(jm_single().DUST_THRESHOLD))
             randomize_minsize = jm_single().DUST_THRESHOLD
         possible_maxsize = mix_balance[max_mix] - max(jm_single().DUST_THRESHOLD, randomize_txfee)
         randomize_maxsize = int(random.uniform(possible_maxsize * (1 - float(self.size_factor)),

@@ -26,6 +26,7 @@ import asyncio
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from twisted.internet.defer import Deferred
 from twisted.web.server import Site
@@ -330,10 +331,13 @@ class SNICKERServerManager(object):
         if self.shutdown_callback:
             self.shutdown_callback()
 
+
 def snicker_server_start(port, local_port=None, hsdir=None):
     ssm = SNICKERServerManager(port, local_port=local_port, hsdir=hsdir)
     ssm.start_snicker_server_and_tor()
 
+
+@wrap_main
 async def _main():
     load_program_config(bs="no-blockchain")
     check_and_start_tor()
@@ -350,5 +354,6 @@ async def _main():
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

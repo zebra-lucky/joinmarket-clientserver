@@ -14,7 +14,7 @@ from optparse import OptionParser
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmclient import load_program_config, jm_single,\
     open_wallet, WalletService, add_external_commitments, update_commitments,\

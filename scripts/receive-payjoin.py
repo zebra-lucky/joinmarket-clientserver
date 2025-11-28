@@ -7,7 +7,7 @@ import sys
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import get_log, jmprint
 from jmclient import jm_single, load_program_config, \

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import get_log, hextobin, bintohex
 from jmbase.support import EXIT_SUCCESS, EXIT_FAILURE, EXIT_ARGERROR, jmprint, cli_prompt_user_yesno

@@ -11,7 +11,7 @@ import jmbitcoin as btc
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import (get_log, jmprint, bintohex, utxostr_to_utxo,
                     IndentedHelpFormatterWithNL, cli_prompt_user_yesno)

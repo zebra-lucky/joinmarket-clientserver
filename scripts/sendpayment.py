@@ -13,7 +13,7 @@ import pprint
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmclient import Taker, load_program_config, get_schedule,\
     JMClientProtocolFactory, start_reactor, validate_address, is_burn_destination, \

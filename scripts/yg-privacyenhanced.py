@@ -6,11 +6,10 @@ import sys
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import get_log, jmprint, EXIT_ARGERROR
 from jmbitcoin import amount_to_str
-from jmclient import YieldGeneratorBasic, ygmain, jm_single
 
 # This is a maker for the purposes of generating a yield from held bitcoins
 # while maximising the difficulty of spying on blockchain activity.

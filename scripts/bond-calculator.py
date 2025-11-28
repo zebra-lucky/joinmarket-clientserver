@@ -9,7 +9,7 @@ from optparse import OptionParser
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import EXIT_ARGERROR, jmprint, get_log, utxostr_to_utxo, EXIT_FAILURE
 from jmbitcoin import amount_to_sat, amount_to_str

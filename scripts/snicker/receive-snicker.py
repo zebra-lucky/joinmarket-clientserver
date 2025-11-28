@@ -6,6 +6,7 @@ import sys
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import get_log, jmprint
 from jmclient import (jm_single, load_program_config, WalletService,
@@ -92,13 +93,14 @@ Usage: %prog [options] wallet file [proposal]
                   daemon=daemon)
 
 
+@wrap_main
 async def _main():
     await receive_snicker_main()
     jmprint('done')
-    reactor.stop()
 
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

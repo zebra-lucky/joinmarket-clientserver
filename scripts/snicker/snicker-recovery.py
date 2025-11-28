@@ -30,6 +30,7 @@ from optparse import OptionParser
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import bintohex, EXIT_ARGERROR, jmprint
 import jmbitcoin as btc
@@ -206,6 +207,7 @@ async def main():
     return False
 
 
+@wrap_main
 async def _main():
     res = await main()
     if not res:
@@ -216,5 +218,6 @@ async def _main():
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

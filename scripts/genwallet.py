@@ -9,7 +9,7 @@ from optparse import OptionParser
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
-from scripts_support import wrap_main, finalize_main_task
+from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from pathlib import Path
 from jmclient import (

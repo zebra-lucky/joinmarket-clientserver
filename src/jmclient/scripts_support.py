@@ -4,7 +4,6 @@ import asyncio
 import sys
 from functools import wraps
 
-import jmclient  # install asyncioreactor
 from twisted.internet import reactor
 
 from jmbase import jmprint

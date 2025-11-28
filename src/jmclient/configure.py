@@ -707,7 +707,7 @@ def load_program_config(config_path: str = "", bs: Optional[str] = None,
         jmprint("Error loading `joinmarket.cfg`, invalid file format.",
             "info")
         twisted_sys_exit(EXIT_FAILURE)
-    if get_network() != 'mainnet':
+    if get_network() == 'mainnet':
         jmprint("Running on mainnet is blocked for beta code", "info")
         twisted_sys_exit(EXIT_FAILURE)
 

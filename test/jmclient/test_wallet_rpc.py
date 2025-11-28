@@ -762,7 +762,8 @@ class TrialTestWRPC_JWT(WalletRPCTestBase):
         handler(response)
 
     def get_token(self, grant_type: str, status: str = "valid"):
-        now, delta = datetime.datetime.utcnow(), datetime.timedelta(hours=1)
+        now = datetime.datetime.now(datetime.UTC)
+        delta = datetime.timedelta(hours=1)
         exp = now - delta if status == "expired" else now + delta
 
         scope = f"walletrpc {self.daemon.wallet_name}"

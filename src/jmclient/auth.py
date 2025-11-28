@@ -76,7 +76,8 @@ class JMTokenAuthority:
     def _issue(self, token_type: str) -> str:
         return jwt.encode(
             {
-                "exp": datetime.datetime.utcnow() + self.SESSION_VALIDITY[token_type],
+                "exp": datetime.datetime.now(datetime.UTC) +
+                    self.SESSION_VALIDITY[token_type],
                 "scope": self.scope,
             },
             self.signature_key[token_type],

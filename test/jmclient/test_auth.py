@@ -29,7 +29,9 @@ class TestJMTokenAuthority:
     )
     def test_verify_valid(self, sig, token_type):
         token = jwt.encode(
-            {"exp": datetime.datetime.utcnow() + self.validity, "scope": self.scope},
+            {"exp": datetime.datetime.now(datetime.UTC) +
+                self.validity,
+             "scope": self.scope},
             sig,
             algorithm=self.token_auth.SIGNATURE_ALGORITHM,
         )
@@ -42,7 +44,9 @@ class TestJMTokenAuthority:
 
     def test_verify_expired(self):
         token = jwt.encode(
-            {"exp": datetime.datetime.utcnow() - self.validity, "scope": self.scope},
+            {"exp": datetime.datetime.now(datetime.UTC) -
+                self.validity,
+             "scope": self.scope},
             self.access_sig,
             algorithm=self.token_auth.SIGNATURE_ALGORITHM,
         )
@@ -52,7 +56,9 @@ class TestJMTokenAuthority:
 
     def test_verify_non_scoped(self):
         token = jwt.encode(
-            {"exp": datetime.datetime.utcnow() + self.validity, "scope": "wrong"},
+            {"exp": datetime.datetime.now(datetime.UTC) +
+                self.validity,
+             "scope": "wrong"},
             self.access_sig,
             algorithm=self.token_auth.SIGNATURE_ALGORITHM,
         )

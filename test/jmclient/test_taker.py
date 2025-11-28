@@ -604,7 +604,7 @@ class AsyncioTestCase(IsolatedAsyncioTestCase, ParametrizedTestCase):
         fake_txd = DummyTx()
         fake_txd.vin = "foo"
         fake_txd.vout = "blah"
-        taker.unconfirm_callback(fake_txd, "b")
+        await taker.unconfirm_callback(fake_txd, "b")
         for i in range(schedule_len-1):
             taker.schedule_index += 1
             fromtx = await taker.confirm_callback(fake_txd, "b", 1)

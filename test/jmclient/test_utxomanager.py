@@ -1,15 +1,12 @@
 
 from test_storage import MockStorage
-import pytest
 from _pytest.monkeypatch import MonkeyPatch
 from unittest import IsolatedAsyncioTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 from jmclient.wallet import UTXOManager
 from jmclient import load_test_config
-import jmclient
 from commontest import DummyBlockchainInterface
 
 

@@ -4,7 +4,7 @@ import functools
 import json
 import os
 
-import jmclient  # install asyncioreactor
+import jmclient  # noqa: F401 install asyncioreactor
 from twisted.internet import reactor
 
 import jwt

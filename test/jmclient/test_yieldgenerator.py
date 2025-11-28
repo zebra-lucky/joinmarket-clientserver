@@ -1,5 +1,4 @@
-
-import unittest
+# -*- coding: utf-8 -*-
 
 import pytest
 from jmbitcoin import CMutableTxOut, CMutableTransaction

@@ -1,7 +1,6 @@
 import ast
 import binascii
 import random
-import sys
 import time
 from abc import ABC, abstractmethod
 from decimal import Decimal

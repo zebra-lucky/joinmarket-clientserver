@@ -8,8 +8,6 @@ from typing import Dict, List, Optional, Set, Tuple
 from decimal import Decimal
 from copy import deepcopy
 from twisted.internet import reactor
-from twisted.internet import task
-from twisted.internet.defer import Deferred
 from twisted.application.service import Service
 from numbers import Integral
 import jmbitcoin as btc
@@ -326,7 +324,7 @@ class WalletService(Service):
 
     async def transaction_monitor(self):
         """Keeps track of any changes in the wallet (new transactions).
-        Intended to be run as a twisted task.LoopingCall so that this
+        Intended to be run as a asyncio Task so that this
         Service is constantly in near-realtime sync with the blockchain.
         """
 

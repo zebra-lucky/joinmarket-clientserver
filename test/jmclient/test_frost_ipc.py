@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-import base64
 import time
-from pprint import pprint
 
 from unittest import IsolatedAsyncioTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 import pytest
 
@@ -48,7 +45,7 @@ class DummyFrostJMClientProtocol:
         self.party_clients = {}
 
     async def dkg_gen(self):
-        log.debug(f'Coordinator call dkg_gen')
+        log.debug('Coordinator call dkg_gen')
         client = self.factory.client
         md_type_idx = None
         session_id = None
@@ -167,11 +164,11 @@ class DummyFrostJMClientProtocol:
 
     async def on_dkg_finalized(self, nick, session_id):
         client = self.factory.client
-        log.debug(f'Coordinator get dkgfinalized')
+        log.debug('Coordinator get dkgfinalized')
         client.on_dkg_finalized(nick, session_id)
 
     def frost_req(self, dkg_session_id, msg_bytes):
-        log.debug(f'Coordinator call frost_req')
+        log.debug('Coordinator call frost_req')
         client = self.factory.client
         hostpubkeyhash, sig, session_id = client.frost_req(
             dkg_session_id, msg_bytes)

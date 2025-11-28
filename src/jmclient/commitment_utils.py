@@ -1,5 +1,5 @@
+# -*- coding: utf-8 -*-
 
-import sys
 from jmbase import (jmprint, utxostr_to_utxo, utxo_to_utxostr, EXIT_FAILURE,
                     twisted_sys_exit)
 from jmclient import jm_single, BTCEngine, BTC_P2PKH, BTC_P2SH_P2WPKH, BTC_P2WPKH

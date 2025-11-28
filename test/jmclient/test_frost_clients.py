@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 
-from pprint import pprint
-
 from hashlib import sha256
 from unittest import IsolatedAsyncioTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 import pytest
 

@@ -1,7 +1,7 @@
 
 import os
 import json
-from twisted.internet import reactor, task
+from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks, Deferred
 from twisted.trial import unittest
 from autobahn.twisted.websocket import WebSocketClientFactory, \

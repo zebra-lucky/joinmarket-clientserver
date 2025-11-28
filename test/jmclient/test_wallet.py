@@ -8,8 +8,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from unittest_parametrize import parametrize, ParametrizedTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
@@ -22,7 +21,7 @@ from jmclient import load_test_config, jm_single, BaseWallet, \
     SegwitWallet, WalletService, SegwitWalletFidelityBonds,\
     create_wallet, open_test_wallet_maybe, open_wallet, \
     FidelityBondMixin, FidelityBondWatchonlyWallet,\
-    wallet_gettimelockaddress, UnknownAddressForLabel, TaprootWallet
+    wallet_gettimelockaddress, UnknownAddressForLabel
 from test_blockchaininterface import sync_test_wallet
 from freezegun import freeze_time
 

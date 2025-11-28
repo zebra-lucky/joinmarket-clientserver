@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import asyncio
 import base64
@@ -11,7 +11,7 @@ try:
     from twisted.internet.ssl import ClientContextFactory
 except ImportError:
     pass
-from jmbase import commands, jmprint
+from jmbase import commands
 import binascii
 import json
 import hashlib
@@ -405,7 +405,7 @@ class JMClientProtocol(BaseClientProtocol):
     """DKG specifics
     """
     async def dkg_gen(self):
-        jlog.debug(f'Coordinator call dkg_gen')
+        jlog.debug('Coordinator call dkg_gen')
         client = self.factory.client
         md_type_idx = None
         session_id = None
@@ -528,7 +528,7 @@ class JMClientProtocol(BaseClientProtocol):
 
         client = self.factory.client
         bin_session_id = hextobin(session_id)
-        jlog.debug(f'Coordinator get dkgfinalized')
+        jlog.debug('Coordinator get dkgfinalized')
         client.on_dkg_finalized(nick, bin_session_id)
         return {'accepted': True}
 
@@ -584,7 +584,7 @@ class JMClientProtocol(BaseClientProtocol):
     """FROST specifics
     """
     def frost_req(self, dkg_session_id, msg_bytes):
-        jlog.debug(f'Coordinator call frost_req')
+        jlog.debug('Coordinator call frost_req')
         client = self.factory.client
         hostpubkeyhash, sig, session_id = client.frost_req(
             dkg_session_id, msg_bytes)

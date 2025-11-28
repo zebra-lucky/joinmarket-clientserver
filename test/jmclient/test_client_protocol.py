@@ -8,7 +8,7 @@ import base64
 
 import pytest
 
-import jmclient  # install asyncioreactor
+import jmclient  # noqa: F401 install asyncioreactor
 from twisted.internet import reactor
 
 from jmbase import get_log, bintohex
@@ -17,7 +17,7 @@ from jmclient import load_test_config, Taker,\
     JMClientProtocolFactory, jm_single, Maker, WalletService
 from jmclient.client_protocol import JMTakerClientProtocol
 from twisted.python.log import msg as tmsg
-from twisted.internet import protocol, reactor, task
+from twisted.internet import protocol, task
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.error import (ConnectionLost, ConnectionAborted,
                                     ConnectionClosed, ConnectionDone)

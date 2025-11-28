@@ -4,11 +4,12 @@ import asyncio
 import random
 import sys
 
-import jmclient  # install asyncioreactor
+import jmclient  # noqa: F401 install asyncioreactor
 from twisted.internet import reactor
 from jmclient.scripts_support import wrap_main, finalize_main_task
 
 from jmbase import get_log, jmprint, EXIT_ARGERROR
+from jmclient import YieldGeneratorBasic, ygmain, jm_single
 from jmbitcoin import amount_to_str
 
 # This is a maker for the purposes of generating a yield from held bitcoins
@@ -19,7 +20,9 @@ from jmbitcoin import amount_to_str
 # YIELD GENERATOR SETTINGS ARE NOW IN YOUR joinmarket.cfg CONFIG FILE
 # (You can also use command line flags; see --help for this script).
 
+
 jlog = get_log()
+
 
 class YieldGeneratorPrivacyEnhanced(YieldGeneratorBasic):
 

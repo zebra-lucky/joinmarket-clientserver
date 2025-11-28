@@ -10,8 +10,8 @@ from decimal import Decimal
 data_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(data_dir))
 
-from unittest import IsolatedAsyncioTestCase as AsyncioTestCase
-from twisted.trial.unittest import TestCase as TrialTestCase
+from unittest import IsolatedAsyncioTestCase as AsyncioTestCase  # noqa: F401
+from twisted.trial.unittest import TestCase as TrialTestCase  # noqa: F401
 
 from jmbase import get_log
 from jmclient import open_test_wallet_maybe, BIP32Wallet, SegwitWallet, \

@@ -16,8 +16,8 @@
 
 import asyncio
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor, defer, task
+import jmclient  # noqa: F401 install asyncioreactor
+from twisted.internet import reactor, defer
 
 from twisted.web.client import readBody, Headers
 from twisted import trial
@@ -26,12 +26,10 @@ import pytest
 import json
 from datetime import datetime
 from _pytest.monkeypatch import MonkeyPatch
-from jmbase import (get_nontor_agent, BytesProducer, jmprint,
-                    get_log, stop_reactor)
+from jmbase import get_nontor_agent, BytesProducer, jmprint, get_log
 from jmclient import (YieldGeneratorBasic, load_test_config, jm_single,
     JMClientProtocolFactory, start_reactor, SegwitWallet, get_mchannels,
     SegwitLegacyWallet, JMWalletDaemon)
-import jmclient
 from jmclient.wallet_rpc import api_version_string
 
 pytestmark = pytest.mark.usefixtures("setup_miniircd", "setup_regtest_bitcoind")

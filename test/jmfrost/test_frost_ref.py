@@ -3,7 +3,6 @@
 import json
 import os
 import secrets
-import sys
 import time
 from typing import List, Optional, Tuple
 

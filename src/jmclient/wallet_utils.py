@@ -12,8 +12,6 @@ from collections import Counter, defaultdict
 from itertools import islice, chain
 from typing import Callable, Optional, Tuple, Union
 
-from twisted.internet import reactor, task
-
 from jmclient import (get_network, WALLET_IMPLEMENTATIONS, Storage, podle,
     jm_single, WalletError, BaseWallet, VolatileStorage, DKGRecoveryStorage,
     StoragePasswordError, is_taproot_mode, is_segwit_mode, SegwitLegacyWallet,
@@ -24,7 +22,6 @@ from jmclient import (get_network, WALLET_IMPLEMENTATIONS, Storage, podle,
 from jmclient.blockchaininterface import (BitcoinCoreInterface,
     BitcoinCoreNoHistoryInterface)
 from jmclient.wallet_service import WalletService
-from jmbase import stop_reactor
 from jmbase.support import (get_password, jmprint, EXIT_FAILURE,
                             EXIT_ARGERROR, utxo_to_utxostr, hextobin, bintohex,
                             IndentedHelpFormatterWithNL, dict_factory,
@@ -459,7 +456,7 @@ async def wallet_showutxos(wallet_service: WalletService, showprivkey: bool,
     for md in _utxos:
         (enabled, disabled) = await get_utxos_enabled_disabled(wallet_service,
                                                                md)
-        for u, av in utxos[md].items():
+        for u, av in _utxos[md].items():
             success, us = utxo_to_utxostr(u)
             assert success
             key = wallet_service._get_key_from_path(av["path"])[0]

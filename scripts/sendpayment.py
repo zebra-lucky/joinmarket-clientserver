@@ -11,7 +11,7 @@ import asyncio
 import sys
 import pprint
 
-import jmclient  # install asyncioreactor
+import jmclient  # noqa: F401 install asyncioreactor
 from twisted.internet import reactor
 from jmclient.scripts_support import wrap_main, finalize_main_task
 

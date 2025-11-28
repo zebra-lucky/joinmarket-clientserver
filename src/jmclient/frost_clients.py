@@ -12,20 +12,13 @@ from jmbase import hextobin, get_log
 from jmbitcoin import CCoinKey
 from jmclient.configure import jm_single
 from jmfrost.chilldkg_ref.chilldkg import (
-    params_id,
     hostpubkey_gen,
     participant_step1,
     participant_step2,
     participant_finalize,
-    participant_investigate,
     coordinator_step1,
     coordinator_finalize,
-    coordinator_investigate,
     SessionParams,
-    DKGOutput,
-    RecoveryData,
-    FaultyParticipantOrCoordinatorError,
-    UnknownFaultyParticipantOrCoordinatorError,
     ParticipantMsg1,
     ParticipantMsg2,
     CoordinatorMsg1,
@@ -259,7 +252,7 @@ class DKGClient:
                 raise Exception(f'pubkey for {pubkeyhash.hex()} not found')
             xpubkey = XOnlyPubKey(pubkey[1:])
             if not xpubkey.verify_schnorr(session_id, hextobin(sig)):
-                raise Exception(f'signature verification failed')
+                raise Exception('signature verification failed')
             if pubkey in coordinator.parties:
                 jlog.debug(f'pubkey {pubkey.hex()} already in'
                            f' coordinator parties')

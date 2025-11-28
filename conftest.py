@@ -7,7 +7,7 @@ from typing import Any, Tuple
 
 import pytest
 
-import jmclient  # install asyncioreactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 
 def get_bitcoind_version(bitcoind_path: str, conf: str) -> Tuple[int, int]:

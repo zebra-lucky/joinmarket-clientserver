@@ -9,8 +9,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from unittest_parametrize import parametrize, ParametrizedTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch

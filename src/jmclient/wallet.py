@@ -32,7 +32,6 @@ from .cryptoengine import TYPE_P2PKH, TYPE_P2SH_P2WPKH, TYPE_P2WSH,\
     TYPE_WATCHONLY_P2WPKH, TYPE_P2TR, TYPE_P2TR_FROST, ENGINES, \
     detect_script_type, EngineError, TYPE_TAPROOT_WALLET_FIDELITY_BONDS, \
     TYPE_TAPROOT_WATCHONLY_FIDELITY_BONDS, TYPE_WATCHONLY_P2TR
-from .storage import DKGRecoveryStorage
 from .support import get_random_bytes
 from . import mn_encode, mn_decode
 import jmbitcoin as btc
@@ -40,7 +39,6 @@ from jmbase import JM_WALLET_NAME_PREFIX, bintohex, hextobin, jmprint, get_log
 from jmfrost.chilldkg_ref import chilldkg
 from .frost_clients import (chilldkg_hexlify, decrypt_ext_recovery,
                             deserialize_ext_recovery, serialize_ext_recovery)
-from jmfrost.chilldkg_ref.chilldkg import hostpubkey_gen
 
 
 jlog = get_log()

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import pprint
 import os
-import sys
 import time
 import numbers
 from typing import Callable, List, Optional, Tuple, Union

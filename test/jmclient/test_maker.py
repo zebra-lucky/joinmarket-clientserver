@@ -2,20 +2,17 @@ import datetime
 
 from unittest import IsolatedAsyncioTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 import jmbitcoin as btc
 from jmclient import Maker, load_test_config, jm_single, WalletService, VolatileStorage, \
     SegwitWalletFidelityBonds, get_network
-import jmclient
 from commontest import DummyBlockchainInterface
 from test_taker import DummyWallet
 
 import struct
 import binascii
 from itertools import chain
-import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
 

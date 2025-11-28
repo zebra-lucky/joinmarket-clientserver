@@ -5,9 +5,9 @@ import os
 import random
 from decimal import Decimal
 from typing import Callable, List, Optional, Set, Tuple, Union
-from unittest import IsolatedAsyncioTestCase as AsyncioTestCase
+from unittest import IsolatedAsyncioTestCase as AsyncioTestCase  # noqa: F401
 
-from twisted.trial.unittest import TestCase as TrialTestCase
+from twisted.trial.unittest import TestCase as TrialTestCase  # noqa: F401
 
 import jmbitcoin as btc
 from jmbase import (get_log, hextobin, bintohex, dictchanger)

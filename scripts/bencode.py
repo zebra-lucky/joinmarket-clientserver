@@ -3,7 +3,6 @@
 
 import click
 import json
-from pprint import pprint
 from fastbencode import bencode_utf8
 
 

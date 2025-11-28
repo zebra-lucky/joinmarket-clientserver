@@ -9,8 +9,7 @@ import pytest
 import struct
 from unittest import IsolatedAsyncioTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 from commontest import make_wallets, make_sign_and_push, ensure_bip65_activated
 

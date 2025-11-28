@@ -1,13 +1,12 @@
 import base64
 import hashlib
-import sys
 import abc
 import atexit
 
 from bitcointx.wallet import CCoinKey, XOnlyPubKey, tap_tweak_pubkey
 
 import jmbitcoin as btc
-from jmbase import (bintohex, hexbin, async_hexbin, get_log, EXIT_FAILURE,
+from jmbase import (bintohex, async_hexbin, get_log, EXIT_FAILURE,
                     twisted_sys_exit)
 from jmclient.wallet import TaprootWallet, FrostWallet
 from jmclient.wallet_service import WalletService

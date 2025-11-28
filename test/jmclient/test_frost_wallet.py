@@ -1,14 +1,12 @@
 '''Wallet functionality tests.'''
 import os
 import json
-from pprint import pprint
 
 from unittest import IsolatedAsyncioTestCase
 
 from fastbencode import bdecode
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 import pytest
 import jmbitcoin as btc

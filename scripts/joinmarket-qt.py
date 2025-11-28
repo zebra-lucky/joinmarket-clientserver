@@ -21,7 +21,7 @@ Some widgets copied and modified from https://github.com/spesmilo/electrum
 
 import asyncio
 import sys, datetime, os, logging
-import platform, json, time
+import platform, json
 from optparse import OptionParser
 from typing import Optional, Tuple
 
@@ -77,7 +77,7 @@ from jmclient import load_program_config, get_network, update_persist_config,\
 from jmclient.wallet import BaseWallet
 
 from qtsupport import (ScheduleWizard, TumbleRestartWizard, config_tips,
-    config_types, QtHandler, XStream, Buttons, OkButton, CancelButton,
+    config_types, QtHandler, XStream,
     JMPasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,
     donation_more_message, BitcoinAmountEdit, JMIntValidator,
     ReceiveBIP78Dialog, QRCodePopup, JMExportPrivkeysDialog,
@@ -2573,7 +2573,7 @@ def qt_exception_handler(context):
 
 
 async def main():
-    global logsdir, tumble_log, mainWindow
+    global logsdir, tumble_log
 
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(qt_exception_handler)

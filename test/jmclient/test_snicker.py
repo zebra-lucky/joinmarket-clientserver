@@ -7,8 +7,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from unittest_parametrize import parametrize, ParametrizedTestCase
 
-import jmclient  # install asyncioreactor
-from twisted.internet import reactor
+import jmclient  # noqa: F401 install asyncioreactor
 
 from commontest import make_wallets, dummy_accept_callback, dummy_info_callback
 import jmbitcoin as btc

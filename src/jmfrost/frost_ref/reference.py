@@ -10,15 +10,13 @@
 # be used in production environments. The code is vulnerable to timing attacks,
 # for example.
 
-from typing import Any, List, Optional, Tuple, NewType, NamedTuple, Sequence
+from typing import List, Optional, Tuple, NewType, NamedTuple, Sequence
 import itertools
 import secrets
-import time
 
-from ..secp256k1lab.bip340 import schnorr_verify
 from ..secp256k1lab.keys import pubkey_gen_plain
 from ..secp256k1lab.secp256k1 import G, GE, Scalar
-from ..secp256k1lab.util import bytes_from_int, int_from_bytes, tagged_hash
+from ..secp256k1lab.util import int_from_bytes, tagged_hash
 
 PlainPk = NewType('PlainPk', bytes)
 XonlyPk = NewType('XonlyPk', bytes)

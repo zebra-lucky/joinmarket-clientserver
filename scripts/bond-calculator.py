@@ -9,6 +9,7 @@ from optparse import OptionParser
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main, finalize_main_task
 
 from jmbase import EXIT_ARGERROR, jmprint, get_log, utxostr_to_utxo, EXIT_FAILURE
 from jmbitcoin import amount_to_sat, amount_to_str
@@ -133,11 +134,13 @@ async def main() -> None:
             jmprint(f"Top {result['percentile']}% of the orderbook by value")
 
 
+@wrap_main
 async def _main():
     await main()
 
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

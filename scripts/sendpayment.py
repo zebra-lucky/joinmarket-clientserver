@@ -13,6 +13,7 @@ import pprint
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main, finalize_main_task
 
 from jmclient import Taker, load_program_config, get_schedule,\
     JMClientProtocolFactory, start_reactor, validate_address, is_burn_destination, \
@@ -419,13 +420,14 @@ async def main():
     await taker_finished_future
 
 
+@wrap_main
 async def _main():
     await main()
     jmprint('done', "success")
-    reactor.stop()
 
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

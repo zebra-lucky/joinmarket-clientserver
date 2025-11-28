@@ -4,6 +4,7 @@ import asyncio
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main, finalize_main_task
 
 from jmbase import jmprint
 from jmclient import YieldGeneratorBasic, ygmain
@@ -12,6 +13,7 @@ from jmclient import YieldGeneratorBasic, ygmain
 # (You can also use command line flags; see --help for this script).
 
 
+@wrap_main
 async def _main():
     await ygmain(YieldGeneratorBasic, nickserv_password='')
     jmprint("done", "success")
@@ -19,5 +21,6 @@ async def _main():
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

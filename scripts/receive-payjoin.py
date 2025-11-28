@@ -7,6 +7,7 @@ import sys
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main, finalize_main_task
 
 from jmbase import get_log, jmprint
 from jmclient import jm_single, load_program_config, \
@@ -16,6 +17,7 @@ from jmclient import jm_single, load_program_config, \
 from jmbase.support import EXIT_FAILURE, EXIT_ARGERROR
 from jmbitcoin import amount_to_sat
 jlog = get_log()
+
 
 async def receive_payjoin_main():
     parser = OptionParser(usage='usage: %prog [options] [wallet file] [amount-to-receive]')
@@ -86,6 +88,15 @@ async def receive_payjoin_main():
     # JM is default, so must be switched off explicitly in this call:
     start_reactor(dhost, dport, bip78=True, jm_coinjoin=False, daemon=daemon)
 
-if __name__ == "__main__":
-    receive_payjoin_main()
+
+@wrap_main
+def _main():
+    await receive_payjoin_main()
     jmprint('done')
+
+
+if __name__ == "__main__":
+    asyncio_loop = asyncio.get_event_loop()
+    main_task = asyncio_loop.create_task(_main())
+    reactor.run()
+    finalize_main_task(main_task)

@@ -6,6 +6,7 @@ import sys
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main, finalize_main_task
 
 from jmbase import get_log, jmprint, EXIT_ARGERROR
 from jmbitcoin import amount_to_str
@@ -112,6 +113,7 @@ class YieldGeneratorPrivacyEnhanced(YieldGeneratorBasic):
         return [order]
 
 
+@wrap_main
 async def _main():
     await ygmain(YieldGeneratorPrivacyEnhanced, nickserv_password='')
     jmprint('done', "success")
@@ -119,5 +121,6 @@ async def _main():
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

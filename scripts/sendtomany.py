@@ -11,6 +11,7 @@ import jmbitcoin as btc
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main, finalize_main_task
 
 from jmbase import (get_log, jmprint, bintohex, utxostr_to_utxo,
                     IndentedHelpFormatterWithNL, cli_prompt_user_yesno)
@@ -125,6 +126,7 @@ async def main():
     jm_single().bc_interface.pushtx(txsigned.serialize())
 
 
+@wrap_main
 async def _main():
     await main()
     jmprint('done', "success")
@@ -132,5 +134,6 @@ async def _main():
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

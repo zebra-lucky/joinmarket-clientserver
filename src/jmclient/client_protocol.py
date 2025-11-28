@@ -273,7 +273,8 @@ class SNICKERClientProtocol(BaseClientProtocol):
         try:
             proposals = proposals.split("\n")
         except:
-            jlog.warn("Error in parsing proposals from server: " + str(server))
+            jlog.warning("Error in parsing proposals from"
+                         " server: " + str(server))
             return {"accepted": True}
         reactor.callLater(0.0, self.process_proposals, proposals)
         return {"accepted": True}
@@ -421,7 +422,7 @@ class JMClientProtocol(BaseClientProtocol):
             if session_id is None:
                 session_id, _, session = self.dkg_init(*md_type_idx)
                 if session_id is None:
-                    jlog.warn('could not get session_id from dkg_init}')
+                    jlog.warning('could not get session_id from dkg_init}')
                     await asyncio.sleep(5)
                     continue
 
@@ -1209,8 +1210,9 @@ def start_reactor(host, port, factory=None, snickerfactory=None,
                         name, str(p[0] - port_offset)))
                     break
                 except Exception:
-                    jlog.warn("Cannot listen on port " + str(
-                        p[0] - port_offset) + ", trying next port")
+                    jlog.warning("Cannot listen on port " +
+                                 str(p[0] - port_offset) +
+                                 ", trying next port")
                     if p[0] >= (orgp + 100):
                         jlog.error("Tried 100 ports but cannot "
                                    "listen on any of them. Quitting.")

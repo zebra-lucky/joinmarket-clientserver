@@ -471,8 +471,8 @@ class Taker(object):
             try:
                 self.nonrespondants.remove(maker_inputs.nick)
             except Exception as e:
-                jlog.warn(
-                    "Failure to remove counterparty from nonrespondants list:"
+                jlog.warning(
+                    f"Failure to remove counterparty from nonrespondants list:"
                     f" {maker_inputs.nick}), error message: {repr(e)})")
 
         #Apply business logic of how many counterparties are enough; note that
@@ -554,10 +554,11 @@ class Taker(object):
             sweep_delta = float(jm_single().config.get("POLICY",
                                                        "max_sweep_fee_change"))
             if feeratio < 1 - sweep_delta or feeratio > 1 + sweep_delta:
-                jlog.warn("Transaction fee for sweep: {} too far from expected:"
-                          " {}; check the setting 'max_sweep_fee_change'"
-                          " in joinmarket.cfg. Aborting this attempt.".format(
-                              new_total_fee, self.total_txfee))
+                jlog.warning("Transaction fee for sweep: {} too far from"
+                             " expected: {}; check the setting"
+                             " 'max_sweep_fee_change' in joinmarket.cfg."
+                             " Aborting this ""attempt."
+                             "".format(new_total_fee, self.total_txfee))
                 return (False, "Unacceptable feerate for sweep, giving up.")
         else:
             self.outputs.append({'address': self.my_change_addr,
@@ -601,8 +602,8 @@ class Taker(object):
 
             if not validate_address(cj_addr)[0]\
                     or not validate_address(change_addr)[0]:
-                jlog.warn("Counterparty provided invalid address: {}".format(
-                    (cj_addr, change_addr)))
+                jlog.warning("Counterparty provided invalid address:"
+                             " {}".format((cj_addr, change_addr)))
                 # Interpreted as malicious
                 self.add_ignored_makers([nick])
                 continue
@@ -1004,7 +1005,7 @@ class Taker(object):
                 if asyncio.iscoroutine(info_cb_res):
                     info_cb_res = await info_cb_res
                 # warning is arguably not correct but it will stand out more:
-                jlog.warn(warnmsg)
+                jlog.warning(warnmsg)
                 jlog.info(btc.human_readable_transaction(tx))
                 return
             if not self.push_ourselves():

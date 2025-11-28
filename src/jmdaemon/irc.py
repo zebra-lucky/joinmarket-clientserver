@@ -26,7 +26,7 @@ def wlog(*x):
 
     if x[0] == "WARNING":
         msg = " ".join([conv(a) for a in x[1:]])
-        log.warn(msg)
+        log.warning(msg)
     elif x[0] == "INFO":
         msg = " ".join([conv(a) for a in x[1:]])
         log.info(msg)

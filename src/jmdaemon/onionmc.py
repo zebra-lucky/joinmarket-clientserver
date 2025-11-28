@@ -206,14 +206,15 @@ class OnionLineProtocolFactory(protocol.ServerFactory):
         peer_location = network_addr_to_string(p.transport.getPeer())
         self.client.register_disconnection(peer_location)
         if peer_location not in self.peers:
-            log.warn("Disconnection event registered for non-existent peer.")
+            log.warning("Disconnection event registered for"
+                        " non-existent peer.")
             return
         del self.peers[peer_location]
 
     def disconnect_inbound_peer(self, inbound_peer_str: str) -> None:
         if inbound_peer_str not in self.peers:
-            log.warn("cannot disconnect peer at {}, not found".format(
-                inbound_peer_str))
+            log.warning("cannot disconnect peer at {}, not"
+                        " found".format(inbound_peer_str))
         proto = self.peers[inbound_peer_str]
         proto.transport.loseConnection()
 
@@ -224,8 +225,9 @@ class OnionLineProtocolFactory(protocol.ServerFactory):
 
     def send(self, message: OnionCustomMessage, destination: str) -> bool:
         if destination not in self.peers:
-            log.warn("sending message {}, destination {} was not in peers {}".format(
-                message.encode(), destination, self.peers))
+            log.warning(
+                "sending message {}, destination {} was not in peers"
+                " {}".format(message.encode(), destination, self.peers))
             return False
         proto = self.peers[destination]
         proto.message(message)
@@ -479,8 +481,9 @@ class OnionPeer(object):
         code; no action is triggered.
         """
         name = "directory" if self.directory else "peer"
-        log.warn("Failure to send message to {}: {}.".format(
-            name, self.peer_location()))
+        log.warning(
+            "Failure to send message to"
+            " {}: {}.".format(name, self.peer_location()))
 
     def connect(self) -> None:
         """ This method is called to connect, over Tor, to the remote
@@ -553,8 +556,8 @@ class OnionPeer(object):
             # TODO remove message or change it.
             log.debug("Tried to connect but failed: {}".format(repr(e)))
         except Exception as e:
-            log.warn("Got unexpected exception in connect attempt: {}".format(
-                repr(e)))
+            log.warning("Got unexpected exception in connect"
+                        " attempt: {}".format(repr(e)))
 
     def disconnect(self) -> None:
         if self._status in [PEER_STATUS_UNCONNECTED, PEER_STATUS_DISCONNECTED]:
@@ -824,8 +827,8 @@ class OnionMessageChannel(MessageChannel):
             try:
                 peer_sendable = self.get_directory_for_nick(nick)
             except OnionDirectoryPeerNotFound:
-                log.warn("Failed to send privmsg because no "
-                "directory peer is connected.")
+                log.warning("Failed to send privmsg because no "
+                            "directory peer is connected.")
                 return
         self._send(peer_sendable, encoded_privmsg)
 
@@ -946,8 +949,8 @@ class OnionMessageChannel(MessageChannel):
         except Exception as e:
             # This can happen when a peer disconnects, depending
             # on the timing:
-            log.warn("Failed to send message to: {}, error: {}".format(
-                peer.peer_location(), repr(e)))
+            log.warning("Failed to send message to: {}, error:"
+                        " {}".format(peer.peer_location(), repr(e)))
             return False
 
     def receive_msg(self, message: OnionCustomMessage, peer_location: str) -> None:
@@ -961,7 +964,8 @@ class OnionMessageChannel(MessageChannel):
             log.debug("received message as directory: {}".format(message.encode()))
         peer = self.get_peer_by_id(peer_location)
         if not peer:
-            log.warn("Received message but could not find peer: {}".format(peer_location))
+            log.warning("Received message but could not find peer:"
+                        " {}".format(peer_location))
             return
         msgtype = message.msgtype
         msgval = message.text
@@ -1153,7 +1157,8 @@ class OnionMessageChannel(MessageChannel):
             # returning True whether raised or not - see docstring
             return True
         elif msgtype == CONTROL_MESSAGE_TYPES["getpeerlist"]:
-            log.warn("getpeerlist request received, currently not supported.")
+            log.warning("getpeerlist request received, currently"
+                        " not supported.")
             return True
         elif msgtype == CONTROL_MESSAGE_TYPES["handshake"]:
             # sent by non-directory peers on startup, also to
@@ -1202,15 +1207,15 @@ class OnionMessageChannel(MessageChannel):
         peer = self.get_peer_by_id(peerid)
         if not peer:
             # rando sent us a handshake?
-            log.warn("Unexpected handshake from unknown peer: {}, "
-                     "ignoring.".format(peerid))
+            log.warning("Unexpected handshake from unknown peer: {}, "
+                        "ignoring.".format(peerid))
             return
         assert isinstance(peer, OnionPeer)
         if not peer.status() == PEER_STATUS_CONNECTED:
             # we were not waiting for it:
-            log.warn("Unexpected handshake from peer: {}, "
-                     "ignoring. Peer's current status is: {}".format(
-                         peerid, peer.status()))
+            log.warning(
+                "Unexpected handshake from peer: {}, ignoring. Peer's current"
+                " status is: {}".format(peerid, peer.status()))
             return
         if dn:
             # it means, we are a non-dn and we are expecting
@@ -1219,8 +1224,8 @@ class OnionMessageChannel(MessageChannel):
             assert not self.self_as_peer.directory
             if not peer.directory:
                 # got dn-handshake from non-dn:
-                log.warn("Unexpected dn-handshake from non-dn "
-                         "node: {}, ignoring.".format(peerid))
+                log.warning("Unexpected dn-handshake from non-dn "
+                            "node: {}, ignoring.".format(peerid))
                 return
             # we got the right message from the right peer;
             # check it is formatted correctly and represents
@@ -1241,28 +1246,29 @@ class OnionMessageChannel(MessageChannel):
                 assert isinstance(nick, str)
                 assert isinstance(net, str)
             except Exception as e:
-                log.warn("Invalid handshake message from: {},"
-                " exception: {}, message: {},ignoring".format(
-                    peerid, repr(e), message))
+                log.warning(
+                    "Invalid handshake message from: {}, exception: {},"
+                    " message: {},ignoring".format(peerid, repr(e), message))
                 return
             # currently we are not using any features, but the intention
             # is forwards compatibility, so we don't check its contents
             # at all.
             if not accepted:
-                log.warn("Directory: {} rejected our handshake.".format(peerid))
+                log.warning("Directory: {} rejected our "
+                            "handshake.".format(peerid))
                 # explicitly choose to disconnect (if other side already did,
                 # this is no-op).
                 peer.disconnect()
                 return
             if not (app_name == JM_APP_NAME and is_directory and JM_VERSION \
                     <= proto_max and JM_VERSION >= proto_min and accepted):
-                log.warn("Handshake from directory is incompatible or "
-                         "rejected: {}".format(handshake_json))
+                log.warning("Handshake from directory is incompatible or "
+                            "rejected: {}".format(handshake_json))
                 peer.disconnect()
                 return
             if not net == self.btc_network:
-                log.warn("Handshake from directory is on an incompatible "
-                         "network: {}".format(net))
+                log.warning("Handshake from directory is on an incompatible "
+                            "network: {}".format(net))
                 return
             # We received a valid, accepting dn-handshake. Update the peer.
             peer.update_status(PEER_STATUS_HANDSHAKED)
@@ -1287,19 +1293,21 @@ class OnionMessageChannel(MessageChannel):
                 assert isinstance(nick, str)
                 assert isinstance(net, str)
             except Exception as e:
-                log.warn("(not dn) Invalid handshake message from: {}, "
-                         "exception: {}, message: {}, ignoring".format(
-                             peerid, repr(e), message))
+                log.warning(
+                    "(not dn) Invalid handshake message from:"
+                    " {}, exception: {}, message: {},"
+                    " ignoring".format(peerid, repr(e), message))
                 # just ignore, since a syntax failure could lead to a crash
                 return
             if not (app_name == JM_APP_NAME and proto_ver == JM_VERSION \
                     and not is_directory):
-                log.warn("Invalid handshake name/version data: {}, from peer: "
-                         "{}, rejecting.".format(message, peerid))
+                log.warning(
+                    "Invalid handshake name/version data: {},"
+                    " from peer: {}, rejecting.".format(message, peerid))
                 accepted = False
             if not net == self.btc_network:
-                log.warn("Handshake from peer is on an incompatible "
-                         "network: {}".format(net))
+                log.warning("Handshake from peer is on an incompatible "
+                            "network: {}".format(net))
                 accepted = False
             # If accepted, we should update the peer to have the full
             # location which in general will not yet be present, so as to
@@ -1398,7 +1406,8 @@ class OnionMessageChannel(MessageChannel):
             # There are currently a few ways the location
             # parsing and Peer object construction can fail;
             # TODO specify exception types.
-            log.warn("Failed to add peer: {}, exception: {}".format(peer, repr(e)))
+            log.warning("Failed to add peer: {}, exception:"
+                        " {}".format(peer, repr(e)))
             return
         if not self.get_peer_by_id(temp_p.peer_location()):
             self.peers.add(temp_p)

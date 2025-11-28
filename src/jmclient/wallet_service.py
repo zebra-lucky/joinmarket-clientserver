@@ -132,8 +132,8 @@ class WalletService(Service):
         assert isinstance(self.current_blockheight, Integral)
         assert self.current_blockheight >= 0
         if self.current_blockheight < old_blockheight:
-            jlog.warn("Bitcoin Core is reporting a lower blockheight, "
-                      "possibly a reorg.")
+            jlog.warning("Bitcoin Core is reporting a lower blockheight, "
+                         "possibly a reorg.")
         return True
 
     def startService(self):

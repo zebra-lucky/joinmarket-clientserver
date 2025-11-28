@@ -465,7 +465,7 @@ class DKGClient:
                                     f'{session_id.hex()}')
             return session.dkg_output.threshold_pubkey
         except Exception as e:
-            jlog.warn(f'wait_on_dkg_output: {repr(e)}')
+            jlog.warning(f'wait_on_dkg_output: {repr(e)}')
         finally:
             sess_id = self.dkg_sessions.pop(session_id, None)
             if not sess_id:

@@ -488,7 +488,8 @@ class JMWalletDaemon(Service):
         # balances; there are various approaches to passing warnings
         # or requesting rescans, none are implemented yet.
         def dummy_restart_callback(msg):
-            jlog.warn("Ignoring rescan request from backend wallet service: " + msg)
+            jlog.warning("Ignoring rescan request from backend wallet"
+                         " service: " + msg)
         self.services["wallet"].add_restart_callback(dummy_restart_callback)
         self.active_session = True
         self.wss_factory.active_session = True
@@ -562,7 +563,7 @@ class JMWalletDaemon(Service):
             except Exception as e:
                 # Should not happen, but avoid crash if trying to
                 # shut down something that already disconnected:
-                jlog.warn("Failed to shut down connection: " + repr(e))
+                jlog.warning("Failed to shut down connection: " + repr(e))
             self.coinjoin_connection = None
 
     def filter_orders_callback(self,orderfees, cjamount):
@@ -666,10 +667,10 @@ class JMWalletDaemon(Service):
             print_req(request)
             self.check_cookie(request)
             if not self.services["wallet"]:
-                jlog.warn("displaywallet called, but no wallet loaded")
+                jlog.warning("displaywallet called, but no wallet loaded")
                 raise NoWalletFound()
             if not self.wallet_name == walletname:
-                jlog.warn("called displaywallet with wrong wallet")
+                jlog.warning("called displaywallet with wrong wallet")
                 raise InvalidRequestFormat()
             else:
                 walletinfo = await wallet_display(
@@ -690,10 +691,10 @@ class JMWalletDaemon(Service):
             print_req(request)
             self.check_cookie(request)
             if not self.services["wallet"]:
-                jlog.warn("rescanblockchain called, but no wallet service active.")
+                jlog.warning("rescanblockchain called, but no wallet service active.")
                 raise NoWalletFound()
             if not self.wallet_name == walletname:
-                jlog.warn("called rescanblockchain with wrong wallet")
+                jlog.warning("called rescanblockchain with wrong wallet")
                 raise InvalidRequestFormat()
             else:
                 self.services["wallet"].rescanblockchain(blockheight)
@@ -706,10 +707,11 @@ class JMWalletDaemon(Service):
             print_req(request)
             self.check_cookie(request)
             if not self.services["wallet"]:
-                jlog.warn("getrescaninfo called, but no wallet service active.")
+                jlog.warning("getrescaninfo called, but no wallet"
+                             " service active.")
                 raise NoWalletFound()
             if not self.wallet_name == walletname:
-                jlog.warn("called getrescaninfo with wrong wallet")
+                jlog.warning("called getrescaninfo with wrong wallet")
                 raise InvalidRequestFormat()
             else:
                 rescanning, progress = \
@@ -964,7 +966,8 @@ class JMWalletDaemon(Service):
                     yigen_data = f.readlines()
                 return yigen_data
             except Exception as e:
-                jlog.warn("Yigen report failed to find file: {}".format(repr(e)))
+                jlog.warning("Yigen report failed to find"
+                             " file: {}".format(repr(e)))
                 raise YieldGeneratorDataUnreadable()
 
         @app.route('/wallet/yieldgen/report', methods=['GET'])
@@ -988,7 +991,7 @@ class JMWalletDaemon(Service):
             if self.services["wallet"] and not self.wallet_name == walletname:
                 raise InvalidRequestFormat()
             if not self.services["wallet"]:
-                jlog.warn("Called lock, but no wallet loaded")
+                jlog.warning("Called lock, but no wallet loaded")
                 # we could raise NoWalletFound here, but is
                 # easier for clients if they can gracefully call
                 # lock multiple times:

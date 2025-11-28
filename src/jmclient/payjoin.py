@@ -576,8 +576,9 @@ async def fallback_nonpayjoin_broadcast(err, manager):
     def quit():
         if manager.mode == "command-line" and reactor.running:
             process_shutdown()
-    log.warn("Payjoin did not succeed, falling back to non-payjoin payment.")
-    log.warn("Error message was: " + err.decode("utf-8"))
+    log.warning("Payjoin did not succeed, falling back to non-payjoin"
+                " payment.")
+    log.warning("Error message was: " + err.decode("utf-8"))
     original_tx = manager.initial_psbt.extract_transaction()
     if not jm_single().bc_interface.pushtx(original_tx.serialize()):
         errormsg = ("Unable to broadcast original payment. Check your wallet\n"
@@ -600,8 +601,8 @@ async def process_error_from_server(errormsg, errorcode, manager):
     assert isinstance(manager, JMPayjoinManager)
     # payjoin attempt has failed, we revert to standard payment.
     assert int(errorcode) != 200
-    log.warn("Receiver returned error code: {}, message: {}".format(
-        errorcode, errormsg))
+    log.warning("Receiver returned error code: {}, message:"
+                " {}".format(errorcode, errormsg))
     await fallback_nonpayjoin_broadcast(errormsg.encode("utf-8"), manager)
     return
 

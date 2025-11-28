@@ -82,8 +82,8 @@ class MessageChannelCollection(object):
                 #but should not kill the bot. So, we don't raise an
                 #exception, but rather allow sending to continue, which
                 #should usually result in tx completion just timing out.
-                log.warn("Couldn't find a route to send privmsg")
-                log.warn("For counterparty: " + str(cp))
+                log.warning("Couldn't find a route to send privmsg")
+                log.warning("For counterparty: " + str(cp))
 
         return func_wrapper
 
@@ -651,8 +651,8 @@ class MessageChannelCollection(object):
         """
         matched_channels = [x for x in self.mchannels if hostid == x.hostid]
         if len(matched_channels) != 1:
-            log.warn("Channel on which privmsg was received is now inactive; "
-                     "continuing to process this message")
+            log.warning("Channel on which privmsg was received is now"
+                        " inactive; continuing to process this message")
         mc = matched_channels[0]
         mc.on_verified_privmsg(nick, message)
 

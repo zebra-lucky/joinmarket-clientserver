@@ -20,8 +20,8 @@ class JmwalletdWebSocketServerProtocol(WebSocketServerProtocol):
         if not self.active_session:
             # not sending any data if the session is
             # not active, i.e. client hasn't authenticated.
-            jlog.warn("Websocket not sending notification, "
-                      "the session is not active.")
+            jlog.warning("Websocket not sending notification, "
+                         "the session is not active.")
             return
         self.sendMessage(json.dumps(info).encode())
 

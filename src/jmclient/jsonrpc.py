@@ -108,17 +108,17 @@ class JsonRpc(object):
                 return "CONNFAILURE"
             except socket.error as e:
                 if e.errno == errno.ECONNRESET:
-                    jlog.warn('Connection was reset, attempting reconnect.')
+                    jlog.warning('Connection was reset, attempting reconnect.')
                     self.conn.close()
                     self.conn.connect()
                 elif e.errno == errno.EPIPE:
-                    jlog.warn('Connection had broken pipe, attempting '
-                              'reconnect.')
+                    jlog.warning('Connection had broken pipe, attempting '
+                                 'reconnect.')
                     self.conn.close()
                     self.conn.connect()
                 elif e.errno == errno.EPROTOTYPE:
-                    jlog.warn('Connection had protocol wrong type for socket '
-                              'error, attempting reconnect.')
+                    jlog.warning('Connection had protocol wrong type for'
+                                 ' socket error, attempting reconnect.')
                     self.conn.close()
                     self.conn.connect()
                 elif e.errno == errno.ECONNREFUSED:

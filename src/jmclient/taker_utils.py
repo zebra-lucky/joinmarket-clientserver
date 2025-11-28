@@ -315,7 +315,7 @@ def restart_wait(txid):
     if res["confirmations"] == 0:
         return False
     if res["confirmations"] < 0:
-        log.warn("Tx: " + txid + " has a conflict, abandoning.")
+        log.warning("Tx: " + txid + " has a conflict, abandoning.")
         twisted_sys_exit(EXIT_SUCCESS)
     else:
         log.debug("Tx: " + str(txid) + " has " + str(

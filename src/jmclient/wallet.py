@@ -694,7 +694,7 @@ class DKGManager:
                     'session_params': session_params,
                 }
             except Exception as e:
-                jlog.warn(f'recdkg_ls: Can not recover data{repr(e)}')
+                jlog.warning(f'recdkg_ls: Can not recover data{repr(e)}')
                 recovery_data = recovery_data.hex()
             if decoded_ext_rec:
                 dec_res.append([session_id.hex(), dec_ext_rec, recovery_data])

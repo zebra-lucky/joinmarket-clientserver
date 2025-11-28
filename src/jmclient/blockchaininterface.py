@@ -288,8 +288,8 @@ class BlockchainInterface(ABC):
                 msg = msg + " (randomized for privacy)"
             fallback_fee_randomized = random.uniform(
                 fallback_fee, fallback_fee * float(1 + tx_fees_factor))
-            log.warn(msg + ": " +
-                btc.fee_per_kb_to_str(fallback_fee_randomized) + ".")
+            log.warning(msg + ": " +
+                        btc.fee_per_kb_to_str(fallback_fee_randomized) + ".")
             return int(fallback_fee_randomized)
 
         feerate, blocks = retval
@@ -477,7 +477,7 @@ class BitcoinCoreInterface(BlockchainInterface):
             if row['success'] == False:
                 num_failed += 1
                 # don't try/catch, assume failure always has error message
-                log.warn(row['error']['message'])
+                log.warning(row['error']['message'])
         if num_failed > 0:
             fatal_msg = ("Fatal sync error: import of {} address(es) failed for "
                          "some reason. To prevent coin or privacy loss, "
@@ -520,7 +520,7 @@ class BitcoinCoreInterface(BlockchainInterface):
             if row['success'] == False:
                 num_failed += 1
                 # don't try/catch, assume failure always has error message
-                log.warn(row['error']['message'])
+                log.warning(row['error']['message'])
         if num_failed > 0:
             fatal_msg = ("Fatal sync error: import of {} address(es) failed for "
                          "some reason. To prevent coin or privacy loss, "
@@ -561,11 +561,11 @@ class BitcoinCoreInterface(BlockchainInterface):
             res = self._rpc("gettransaction", [htxid, True])
         except JsonRpcError as e:
             #This should never happen (gettransaction is a wallet rpc).
-            log.warn("Failed gettransaction call; JsonRpcError: " + repr(e))
+            log.warning("Failed gettransaction call; JsonRpcError: " + repr(e))
             return None
         except Exception as e:
-            log.warn("Failed gettransaction call; unexpected error:")
-            log.warn(str(e))
+            log.warning("Failed gettransaction call; unexpected error:")
+            log.warning(str(e))
             return None
         if res is None:
             # happens in case of rpc connection failure:
@@ -580,11 +580,12 @@ class BitcoinCoreInterface(BlockchainInterface):
         try:
             res = self._rpc("getrawtransaction", [htxid])
         except JsonRpcError as e:
-            log.warn("Failed getrawtransaction call; JsonRpcError: " + repr(e))
+            log.warning("Failed getrawtransaction call; JsonRpcError: " +
+                        repr(e))
             return None
         except Exception as e:
-            log.warn("Failed getrawtransaction call; unexpected error:")
-            log.warn(str(e))
+            log.warning("Failed getrawtransaction call; unexpected error:")
+            log.warning(str(e))
             return None
         if res is None:
             # happens in case of rpc connection failure:
@@ -616,13 +617,13 @@ class BitcoinCoreInterface(BlockchainInterface):
         for txo in txouts:
             txo_hex = bintohex(txo[0])
             if len(txo_hex) != 64:
-                log.warn("Invalid utxo format, ignoring: {}".format(txo))
+                log.warning("Invalid utxo format, ignoring: {}".format(txo))
                 result.append(None)
                 continue
             try:
                 txo_idx = int(txo[1])
             except ValueError:
-                log.warn("Invalid utxo format, ignoring: {}".format(txo))
+                log.warning("Invalid utxo format, ignoring: {}".format(txo))
                 result.append(None)
                 continue
             ret = self._rpc('gettxout', [txo_hex, txo_idx, include_mempool])
@@ -674,7 +675,7 @@ class BitcoinCoreInterface(BlockchainInterface):
             if estimate and estimate > 0:
                 return (btc.btc_to_sat(estimate), rpc_result.get('blocks'))
         # cannot get a valid estimate after `tries` tries:
-        log.warn("Could not source a fee estimate from Core")
+        log.warning("Could not source a fee estimate from Core")
         return None
 
     def get_current_block_height(self) -> int:

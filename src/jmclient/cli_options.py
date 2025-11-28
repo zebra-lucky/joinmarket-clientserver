@@ -1,4 +1,6 @@
 #! /usr/bin/env python
+
+import asyncio
 import random
 from optparse import OptionParser, OptionValueError
 from configparser import NoOptionError
@@ -210,8 +212,8 @@ max_cj_fee_rel = {rel_val}\n""".format(rel_val=rel_val, abs_val=abs_val))
 
     return rel_val, abs_val
 
-def get_max_cj_fee_values(config, parser_options,
-                          user_callback=prompt_user_for_cj_fee):
+async def get_max_cj_fee_values(config, parser_options,
+                                user_callback=prompt_user_for_cj_fee):
     """ Given a config object, retrieve the chosen maximum absolute
     and relative coinjoin fees chosen by the user, or prompt
     the user via the user_callback function, if not present in
@@ -241,6 +243,8 @@ def get_max_cj_fee_values(config, parser_options,
 
     if any(x is None for x in fee_values):
         fee_values = user_callback(*fee_values)
+        if asyncio.iscoroutine(fee_values):
+            fee_values = await fee_values
 
     return tuple(map(lambda j: fee_types[j](fee_values[j]),
                      range(len(fee_values))))

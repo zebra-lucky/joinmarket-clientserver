@@ -186,7 +186,7 @@ async def main():
 
     maxcjfee = (1, float('inf'))
     if not options.pickorders and options.makercount != 0:
-        maxcjfee = get_max_cj_fee_values(jm_single().config, options)
+        maxcjfee = await get_max_cj_fee_values(jm_single().config, options)
         log.info("Using maximum coinjoin fee limits per maker of {:.4%}, {} "
                  "".format(maxcjfee[0], btc.amount_to_str(maxcjfee[1])))
 

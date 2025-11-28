@@ -1315,7 +1315,7 @@ class JMWalletDaemon(Service):
 
         #route to start a coinjoin transaction
         @app.route('/wallet/<string:walletname>/taker/coinjoin', methods=['POST'])
-        def docoinjoin(self, request, walletname):
+        async def docoinjoin(self, request, walletname):
             self.check_cookie(request)
             if not self.services["wallet"]:
                 raise NoWalletFound()
@@ -1352,8 +1352,8 @@ class JMWalletDaemon(Service):
             # why no defaults).
             def dummy_user_callback(rel, abs):
                 raise ConfigNotPresent()
-            max_cj_fee= get_max_cj_fee_values(jm_single().config,
-                        None, user_callback=dummy_user_callback)
+            max_cj_fee= await get_max_cj_fee_values(
+                jm_single().config, None, user_callback=dummy_user_callback)
             # Before actual start, update our coinjoin state:
             if not self.activate_coinjoin_state(CJ_TAKER_RUNNING):
                 raise ServiceAlreadyStarted()
@@ -1409,7 +1409,7 @@ class JMWalletDaemon(Service):
                     signature=result[0], message=result[1], address=result[2])
 
         @app.route('/wallet/<string:walletname>/taker/schedule', methods=['POST'])
-        def start_tumbler(self, request, walletname):
+        async def start_tumbler(self, request, walletname):
             self.check_cookie(request)
 
             if self.coinjoin_state is not CJ_NOT_RUNNING or self.tumbler_options is not None:
@@ -1451,9 +1451,8 @@ class JMWalletDaemon(Service):
             def dummy_user_callback(rel, abs):
                 raise ConfigNotPresent()
 
-            max_cj_fee = get_max_cj_fee_values(jm_single().config,
-                                               None,
-                                               user_callback=dummy_user_callback)
+            max_cj_fee = await get_max_cj_fee_values(
+                jm_single().config, None, user_callback=dummy_user_callback)
 
             jm_single().mincjamount = tumbler_options['mincjamount']
 

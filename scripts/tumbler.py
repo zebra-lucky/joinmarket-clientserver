@@ -67,7 +67,7 @@ async def main():
     # the sync call here will now be a no-op:
     wallet_service.startService()
 
-    maxcjfee = get_max_cj_fee_values(jm_single().config, options_org)
+    maxcjfee = await get_max_cj_fee_values(jm_single().config, options_org)
     log.info("Using maximum coinjoin fee limits per maker of {:.4%}, {} sat"
              .format(*maxcjfee))
 

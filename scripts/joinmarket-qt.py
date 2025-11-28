@@ -761,12 +761,13 @@ class SpendTab(QWidget):
     def resizeScroll(self, mini, maxi):
         self.textedit.verticalScrollBar().setValue(maxi)
 
-    def restartWaitWrap(self):
+    async def restartWaitWrap(self):
         if restart_wait(self.waitingtxid):
             self.restartTimer.stop()
             self.waitingtxid = None
-            mainWindow.statusBar().showMessage("Transaction in a block, now continuing.")
-            self.startJoin()
+            mainWindow.statusBar().showMessage(
+                "Transaction in a block, now continuing.")
+            await self.startJoin()
 
     async def startMultiple(self):
         if jm_single().bc_interface is None:
@@ -816,12 +817,13 @@ class SpendTab(QWidget):
                 #start another transactions while waiting. Also, use :0 because
                 #it always exists
                 self.waitingtxid=txid
-                self.restartTimer.timeout.connect(self.restartWaitWrap)
+                self.restartTimer.timeout.connect(
+                    lambda: asyncio.ensure_future(self.restartWaitWrap()))
                 self.restartTimer.start(5000)
                 self.updateSchedView()
                 return
             self.updateSchedView()
-        self.startJoin()
+        await self.startJoin()
 
     async def checkDirectSend(self, dtx, destaddr, amount, fee, custom_change_addr):
         """Give user info to decide whether to accept a direct send;
@@ -951,9 +953,9 @@ class SpendTab(QWidget):
                                             destaddr, 0, NO_ROUNDING, 0]]
         self.spendstate.updateType('single')
         self.spendstate.updateRun('running')
-        self.startJoin()
+        await self.startJoin()
 
-    def getMaxCJFees(self, relfee, absfee):
+    async def getMaxCJFees(self, relfee, absfee):
         """ Used as a callback to decide relative and absolute
         maximum fees for coinjoins, in cases where the user has not
         set these values in the config (which is the default)."""
@@ -971,12 +973,11 @@ class SpendTab(QWidget):
               "max_cj_fee_rel = your-value-as-decimal\n"
               "in the [POLICY] section.\n"
               "Note: If you don't do this, this dialog will interrupt the tumbler.")
-        asyncio.ensure_future(
-            JMQtMessageBox(
-                self, msg, mbtype="info", title="Setting fee limits."))
+        await JMQtMessageBox(self, msg, mbtype="info",
+                             title="Setting fee limits.")
         return relfee, absfee
 
-    def startJoin(self):
+    async def startJoin(self):
         if not mainWindow.wallet_service:
             asyncio.ensure_future(
                 JMQtMessageBox(self, "Cannot start without a loaded wallet.",
@@ -995,8 +996,8 @@ class SpendTab(QWidget):
         custom_change = None
         if len(self.changeInput.text().strip()) > 0:
             custom_change = str(self.changeInput.text().strip())
-        maxcjfee = get_max_cj_fee_values(jm_single().config, None,
-                                         user_callback=self.getMaxCJFees)
+        maxcjfee = await get_max_cj_fee_values(jm_single().config, None,
+                                               user_callback=self.getMaxCJFees)
         log.info("Using maximum coinjoin fee limits per maker of {:.4%}, {} "
                      "".format(maxcjfee[0], btc.amount_to_str(maxcjfee[1])))
         wallet = mainWindow.wallet_service.wallet

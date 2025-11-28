@@ -14,6 +14,7 @@ from optparse import OptionParser
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main, finalize_main_task
 
 from jmclient import load_program_config, jm_single,\
     open_wallet, WalletService, add_external_commitments, update_commitments,\
@@ -250,6 +251,8 @@ async def main():
     assert len(utxo_data)
     add_ext_commitments(utxo_data)
 
+
+@wrap_main
 async def _main():
     await main()
     jmprint('done', "success")
@@ -257,5 +260,6 @@ async def _main():
 
 if __name__ == "__main__":
     asyncio_loop = asyncio.get_event_loop()
-    asyncio_loop.create_task(_main())
+    main_task = asyncio_loop.create_task(_main())
     reactor.run()
+    finalize_main_task(main_task)

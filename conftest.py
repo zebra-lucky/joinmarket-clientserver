@@ -264,6 +264,13 @@ def setup_regtest_frost_bitcoind(pytestconfig):
                     "must be 27 or greater.\n")
     local_command(create_wallet)
     local_command(f'{root_cmd} loadwallet {wallet_name} true true')
+    for i in range(2):
+        cpe = local_command(f'{root_cmd} -rpcwallet={wallet_name} getnewaddress')
+        if cpe.returncode != 0:
+            pytest.exit(f"Cannot setup tests, bitcoin-cli failing.\n{cpe.stdout.decode('utf-8')}")
+        destn_addr = cpe.stdout[:-1].decode('utf-8')
+        local_command(f'{root_cmd} -rpcwallet={wallet_name} generatetoaddress 1 {destn_addr}')
+        sleep(1)
     yield
     # shut down bitcoind
     local_command(stop_cmd)

@@ -583,45 +583,76 @@ class JMClientProtocol(BaseClientProtocol):
 
     """FROST specifics
     """
-    def frost_init(self, dkg_session_id, msg_bytes):
-        jlog.debug(f'Coordinator call frost_init')
+    def frost_req(self, dkg_session_id, msg_bytes):
+        jlog.debug(f'Coordinator call frost_req')
         client = self.factory.client
-        hostpubkeyhash, session_id, sig = client.frost_init(
+        hostpubkeyhash, sig, session_id = client.frost_req(
             dkg_session_id, msg_bytes)
         coordinator = client.frost_coordinators.get(session_id)
         session = client.frost_sessions.get(session_id)
         if session_id and session and coordinator:
-            d = self.callRemote(commands.JMFROSTInit,
-                                hostpubkeyhash=hostpubkeyhash,
-                                session_id=bintohex(session_id),
-                                sig=sig)
+            d = self.callRemote(commands.JMFROSTReq,
+                                hostpubkeyhash=hostpubkeyhash, sig=sig,
+                                session_id=bintohex(session_id))
             self.defaultCallbacks(d)
-            coordinator.frost_init_sec = time.time()
+            coordinator.frost_req_sec = time.time()
             return session_id, coordinator, session
         return None, None, None
 
-    @commands.JMFROSTInitSeen.responder
-    def on_JM_FROST_INIT_SEEN(self, nick, hostpubkeyhash, session_id, sig):
+    @commands.JMFROSTReqSeen.responder
+    def on_JM_FROST_REQ_SEEN(self, nick, hostpubkeyhash, sig, session_id):
         wallet = self.client.wallet_service.wallet
         if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
             return {'accepted': True}
 
         client = self.factory.client
         session_id = hextobin(session_id)
-        nick, hostpubkeyhash, session_id, sig, pub_nonce = \
-            client.on_frost_init(nick, hostpubkeyhash, session_id, sig)
+        nick, hostpubkeyhash, sig, session_id = \
+            client.on_frost_req(nick, hostpubkeyhash, sig, session_id)
+        if sig:
+            d = self.callRemote(commands.JMFROSTAck,
+                                nick=nick,
+                                hostpubkeyhash=hostpubkeyhash, sig=sig,
+                                session_id=session_id)
+            self.defaultCallbacks(d)
+        return {'accepted': True}
+
+    @commands.JMFROSTAckSeen.responder
+    def on_JM_FROST_ACK_SEEN(self, nick, hostpubkeyhash, sig, session_id):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        bin_session_id = hextobin(session_id)
+        if client.on_frost_ack(nick, hostpubkeyhash, sig, bin_session_id):
+            d = self.callRemote(commands.JMFROSTInit,
+                                nick=nick, session_id=session_id)
+            self.defaultCallbacks(d)
+        return {'accepted': True}
+
+    @commands.JMFROSTInitSeen.responder
+    def on_JM_FROST_INIT_SEEN(self, nick, session_id):
+        wallet = self.client.wallet_service.wallet
+        if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
+            return {'accepted': True}
+
+        client = self.factory.client
+        session_id = hextobin(session_id)
+        nick, session_id, pubkeyhash, pub_nonce = \
+            client.on_frost_init(nick, session_id)
         if pub_nonce:
             pub_nonce_b64 = base64.b64encode(pub_nonce).decode('ascii')
             d = self.callRemote(commands.JMFROSTRound1,
-                                nick=nick, hostpubkeyhash=hostpubkeyhash,
-                                session_id=session_id, sig=sig,
+                                nick=nick, session_id=session_id,
+                                hostpubkeyhash=pubkeyhash,
                                 pub_nonce=pub_nonce_b64)
             self.defaultCallbacks(d)
         return {'accepted': True}
 
     @commands.JMFROSTRound1Seen.responder
-    def on_JM_FROST_ROUND1_SEEN(self, nick, hostpubkeyhash,
-                                session_id, sig, pub_nonce):
+    def on_JM_FROST_ROUND1_SEEN(self, nick, session_id,
+                                hostpubkeyhash, pub_nonce):
         wallet = self.client.wallet_service.wallet
         if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
             return {'accepted': True}
@@ -630,8 +661,8 @@ class JMClientProtocol(BaseClientProtocol):
         bin_session_id = hextobin(session_id)
         pub_nonce = base64.b64decode(pub_nonce)
         ready_nicks, nonce_agg, dkg_session_id, ids, msg = \
-            client.on_frost_round1(nick, hostpubkeyhash, bin_session_id,
-                                   sig, pub_nonce)
+            client.on_frost_round1(
+                nick, bin_session_id, hostpubkeyhash, pub_nonce)
         if ready_nicks and nonce_agg:
             for nick in ready_nicks:
                 self.frost_agg1(nick, session_id, nonce_agg,

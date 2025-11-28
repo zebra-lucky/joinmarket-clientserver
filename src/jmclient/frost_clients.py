@@ -665,7 +665,7 @@ class FROSTCoordinator:
 
     def __init__(self, *, session_id, hostpubkey, dkg_session_id, msg):
         self.session_id = session_id
-        self.frost_init_sec = 0
+        self.frost_req_sec = 0
         self.hostpubkey = hostpubkey
         self.dkg_session_id = dkg_session_id
         self.msg = msg
@@ -681,7 +681,7 @@ class FROSTCoordinator:
 
     def __repr__(self):
         return (f'FROSTCoordinator(session_id={self.session_id}, '
-                f'frost_init_sec={self.frost_init_sec}, '
+                f'frost_req_sec={self.frost_req_sec}, '
                 f'hostpubkey={self.hostpubkey}, '
                 f'dkg_session_id={self.dkg_session_id}, '
                 f'msg={self.msg}, '
@@ -726,7 +726,7 @@ class FROSTClient(DKGClient):
         self.frost_coordinators = dict()
         self.frost_sessions = dict()
 
-    def frost_init(self, dkg_session_id, msg_bytes):
+    def frost_req(self, dkg_session_id, msg_bytes):
         try:
             wallet = self.wallet_service.wallet
             hostseckey = wallet._hostseckey[:32]
@@ -760,18 +760,18 @@ class FROSTClient(DKGClient):
             coordinator.sessions[hostpubkey]['pub_nonce'] = pub_nonce
             coin_key = CCoinKey.from_secret_bytes(hostseckey)
             sig = coin_key.sign_schnorr_no_tweak(session_id)
-            return hostpubkeyhash.hex(), session_id, sig.hex()
+            return hostpubkeyhash.hex(), sig.hex(), session_id
         except Exception as e:
-            jlog.error(f'frost_init: {repr(e)}')
+            jlog.error(f'frost_req: {repr(e)}')
         return None, None, None
 
-    def on_frost_init(self, nick, pubkeyhash, session_id, sig):
+    def on_frost_req(self, nick, hostpubkeyhash, sig, session_id):
         try:
             if session_id in self.frost_sessions:
                 raise Exception(f'session {session_id.hex()} already exists')
-            pubkey = self.find_pubkey_by_pubkeyhash(pubkeyhash)
+            pubkey = self.find_pubkey_by_pubkeyhash(hostpubkeyhash)
             if not pubkey:
-                raise Exception(f'pubkey for {pubkeyhash.hex()} not found')
+                raise Exception(f'pubkey for {hostpubkeyhash} not found')
             xpubkey = XOnlyPubKey(pubkey[1:])
             if not xpubkey.verify_schnorr(session_id, hextobin(sig)):
                 raise Exception('signature verification failed')
@@ -784,7 +784,7 @@ class FROSTClient(DKGClient):
                     self.my_id = i
                     break
             assert self.my_id is not None
-            hostpubkeyhash = sha256(hostpubkey).digest()
+            my_hostpubkeyhash = sha256(hostpubkey).digest()
             session = FROSTSession(session_id=session_id,
                                    hostpubkey=hostpubkey,
                                    coord_nick=nick,
@@ -792,12 +792,41 @@ class FROSTClient(DKGClient):
             self.frost_sessions[session_id] = session
             coin_key = CCoinKey.from_secret_bytes(hostseckey)
             sig = coin_key.sign_schnorr_no_tweak(session_id)
+            return (nick, my_hostpubkeyhash.hex(), sig.hex(), session_id.hex())
+        except Exception as e:
+            jlog.error(f'on_frost_req: {repr(e)}')
+        return None, None, None, None
+
+    def on_frost_ack(self, nick, hostpubkeyhash, sig, session_id):
+        try:
+            pubkey = self.find_pubkey_by_pubkeyhash(hostpubkeyhash)
+            if not pubkey:
+                raise Exception(f'pubkey for {hostpubkeyhash} not found')
+            xpubkey = XOnlyPubKey(pubkey[1:])
+            if not xpubkey.verify_schnorr(session_id, hextobin(sig)):
+                raise Exception('signature verification failed')
+            return True
+        except Exception as e:
+            jlog.error(f'on_frost_ack: {repr(e)}')
+        return False
+
+    def on_frost_init(self, nick, session_id):
+        try:
+            session = self.frost_sessions.get(session_id)
+            if not session:
+                raise Exception(f'session {session_id.hex()} not found')
+            if session.sec_nonce:
+                raise Exception(f'session.sec_nonce already set '
+                                f'for {session_id.hex()}')
+            wallet = self.wallet_service.wallet
+            hostseckey = wallet._hostseckey[:32]
+            hostpubkey = hostpubkey_gen(hostseckey)
+            pubkeyhash = sha256(hostpubkey).digest()
             pub_nonce = self.frost_round1(session_id)
-            return (nick, hostpubkeyhash.hex(), session_id.hex(),
-                    sig.hex(), pub_nonce)
+            return (nick, session_id.hex(), pubkeyhash.hex(), pub_nonce)
         except Exception as e:
             jlog.error(f'on_frost_init: {repr(e)}')
-        return None, None, None, None, None
+        return None, None, None, None
 
     def frost_round1(self, session_id):
         try:
@@ -815,7 +844,7 @@ class FROSTClient(DKGClient):
         except Exception as e:
             jlog.error(f'frost_round1: {repr(e)}')
 
-    def on_frost_round1(self, nick, pubkeyhash, session_id, sig, pub_nonce):
+    def on_frost_round1(self, nick, session_id, pubkeyhash, pub_nonce):
         try:
             coordinator = self.frost_coordinators.get(session_id)
             if not coordinator:
@@ -827,9 +856,6 @@ class FROSTClient(DKGClient):
             pubkey = self.find_pubkey_by_pubkeyhash(pubkeyhash)
             if not pubkey:
                 raise Exception(f'pubkey for {pubkeyhash} not found')
-            xpubkey = XOnlyPubKey(pubkey[1:])
-            if not xpubkey.verify_schnorr(session_id, hextobin(sig)):
-                raise Exception(f'signature verification failed')
             if pubkey in coordinator.parties:
                 jlog.debug(f'pubkey {pubkey.hex()} already in'
                            f' coordinator parties')
@@ -1003,7 +1029,7 @@ class FROSTClient(DKGClient):
                 await asyncio.sleep(1)
                 if coordinator.sig:
                     break
-                waiting_sec = time.time() - coordinator.frost_init_sec
+                waiting_sec = time.time() - coordinator.frost_req_sec
                 if waiting_sec > self.FROST_WAIT_SEC:
                     raise Exception(f'timed out FROST session '
                                     f'{session_id.hex()}')

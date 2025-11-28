@@ -207,7 +207,7 @@ class MessageChannelCollection(object):
 
     #END PUBLIC/BROADCAST SECTION
 
-    def get_encryption_box(self, cmd, nick):
+    def get_encryption_box(self, cmd, nick, extra=None):
         """Establish whether the message is to be
         encrypted/decrypted based on the command string.
         If so, retrieve the appropriate crypto_box object
@@ -215,12 +215,25 @@ class MessageChannelCollection(object):
         if cmd in plaintext_commands:
             return None, False
         else:
-            return self.daemon.get_crypto_box_from_nick(nick), True
+            if cmd in ['frostinit', 'frostround1', 'frostagg1', 'frostround2']:
+                boxes = self.daemon.get_crypto_box_from_nick(nick)
+                if boxes:
+                    if extra:
+                        box = boxes.get(extra)['crypto_box']
+                    else:
+                        box = None
+            else:
+                box = self.daemon.get_crypto_box_from_nick(nick)
+            return box, True
 
     @check_privmsg
     def prepare_privmsg(self, nick, cmd, message, mc=None):
         # should we encrypt?
-        box, encrypt = self.get_encryption_box(cmd, nick)
+        if cmd in ['frostinit', 'frostround1', 'frostagg1', 'frostround2']:
+            session_id = message.split()[0]
+            box, encrypt = self.get_encryption_box(cmd, nick, extra=session_id)
+        else:
+            box, encrypt = self.get_encryption_box(cmd, nick)
         if encrypt:
             if not box:
                 log.debug('error, dont have encryption box object for ' + nick +
@@ -617,6 +630,8 @@ class MessageChannelCollection(object):
                                  on_dkgfinalized=None,
                                  on_dkgcmsg1=None,
                                  on_dkgcmsg2=None,
+                                 on_frostreq=None,
+                                 on_frostack=None,
                                  on_frostinit=None,
                                  on_frostround1=None,
                                  on_frostround2=None,
@@ -626,8 +641,9 @@ class MessageChannelCollection(object):
                 on_dkginit,
                 on_dkgpmsg1, on_dkgpmsg2, on_dkgfinalized,
                 on_dkgcmsg1, on_dkgcmsg2,
-                on_frostinit,
-                on_frostround1, on_frostround2, on_frostagg1)
+                on_frostreq, on_frostack,
+                on_frostinit, on_frostround1,
+                on_frostround2, on_frostagg1)
 
     def on_verified_privmsg(self, nick, message, hostid):
         """Called from daemon when message was successfully verified,
@@ -692,6 +708,8 @@ class MessageChannel(object):
         self.on_dkgfinalized = None
         self.on_dkgcmsg1 = None
         self.on_dkgcmsg2 = None
+        self.on_frostreq = None
+        self.on_frostack = None
         self.on_frostinit = None
         self.on_frostround1 = None
         self.on_frostround2 = None
@@ -810,6 +828,8 @@ class MessageChannel(object):
                                  on_dkgfinalized=None,
                                  on_dkgcmsg1=None,
                                  on_dkgcmsg2=None,
+                                 on_frostreq=None,
+                                 on_frostack=None,
                                  on_frostinit=None,
                                  on_frostround1=None,
                                  on_frostround2=None,
@@ -820,6 +840,8 @@ class MessageChannel(object):
         self.on_dkgfinalized = on_dkgfinalized
         self.on_dkgcmsg1 = on_dkgcmsg1
         self.on_dkgcmsg2 = on_dkgcmsg2
+        self.on_frostreq = on_frostreq
+        self.on_frostack = on_frostack
         self.on_frostinit = on_frostinit
         self.on_frostround1 = on_frostround1
         self.on_frostround2 = on_frostround2
@@ -952,16 +974,17 @@ class MessageChannel(object):
                 except (ValueError, IndexError) as e:
                     log.debug("!dkginit" + repr(e))
                     return
-            elif _chunks[0] == 'frostinit':
+            elif _chunks[0] == 'frostreq':
                 try:
                     hostpubkeyhash = _chunks[1]
-                    session_id = _chunks[2]
-                    sig = _chunks[3]
-                    if self.on_frostinit:
-                        self.on_frostinit(nick, hostpubkeyhash,
-                                          session_id, sig)
+                    sig = _chunks[2]
+                    session_id = _chunks[3]
+                    dh_pubk = _chunks[4]
+                    if self.on_frostreq:
+                        self.on_frostreq(
+                            nick, hostpubkeyhash, sig, session_id, dh_pubk)
                 except (ValueError, IndexError) as e:
-                    log.debug("!frostinit" + repr(e))
+                    log.debug("!frostreq" + repr(e))
                     return
             elif self.check_for_orders(nick, _chunks):
                 pass
@@ -1038,9 +1061,27 @@ class MessageChannel(object):
             _chunks = command.split(" ")
 
             #Decrypt if necessary
-            if _chunks[0] in encrypted_commands:
-                box, encrypt = self.daemon.mcc.get_encryption_box(_chunks[0],
-                                                                  nick)
+            cmd = _chunks[0]
+            if cmd in encrypted_commands:
+                if cmd in ['frostinit', 'frostround1',
+                           'frostagg1', 'frostround2']:
+                    expected_msgs = self.daemon.frost_expected_msgs
+                    if nick in expected_msgs:
+                        if cmd in expected_msgs[nick]:
+                            expected_msg = expected_msgs[nick].pop(cmd)
+                            if not expected_msgs[nick]:
+                                expected_msgs.pop(nick)
+                            if expected_msg:
+                                session_id = expected_msg['session_id']
+                                box, encrypt = \
+                                    self.daemon.mcc.get_encryption_box(
+                                        cmd, nick, extra=session_id)
+                            else:
+                                box = None
+                                encrypt = True
+                else:
+                    box, encrypt = self.daemon.mcc.get_encryption_box(
+                        cmd, nick)
                 if encrypt:
                     if not box:
                         log.debug('error, dont have encryption box object for '
@@ -1161,14 +1202,25 @@ class MessageChannel(object):
                     ext_recovery = _chunks[3]
                     if self.on_dkgcmsg2:
                         self.on_dkgcmsg2(nick, session_id, cmsg2, ext_recovery)
-                elif _chunks[0] == 'frostround1':
+                elif _chunks[0] == 'frostack':
                     hostpubkeyhash = _chunks[1]
-                    session_id = _chunks[2]
-                    sig = _chunks[3]
-                    pub_nonce = _chunks[4]
+                    sig = _chunks[2]
+                    session_id = _chunks[3]
+                    dh_pubk = _chunks[4]
+                    if self.on_frostack:
+                        self.on_frostack(
+                            nick, hostpubkeyhash, sig, session_id, dh_pubk)
+                elif _chunks[0] == 'frostinit':
+                    session_id = _chunks[1]
+                    if self.on_frostinit:
+                        self.on_frostinit(nick, session_id)
+                elif _chunks[0] == 'frostround1':
+                    session_id = _chunks[1]
+                    pubkeyhash = _chunks[2]
+                    pub_nonce = _chunks[3]
                     if self.on_frostround1:
                         self.on_frostround1(
-                            nick, hostpubkeyhash, session_id, sig, pub_nonce)
+                            nick, session_id, pubkeyhash, pub_nonce)
                 elif _chunks[0] == 'frostagg1':
                     session_id = _chunks[1]
                     nonce_agg = _chunks[2]

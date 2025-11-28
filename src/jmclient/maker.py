@@ -127,7 +127,7 @@ class Maker(object):
             path = wallet.addr_to_path(auth_address)
             md, address_type, index = wallet.get_details(path)
             kphex_hash = hashlib.sha256(bintohex(kphex).encode()).digest()
-            sig, _, tweaked_pubkey = await wallet.ipc_client.frost_sign(
+            sig, _, tweaked_pubkey = await wallet.ipc_client.frost_req(
                 md, address_type, index, kphex_hash)
             sig = base64.b64encode(sig).decode('ascii')
             if not sig:

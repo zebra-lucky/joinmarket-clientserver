@@ -90,7 +90,7 @@ async def receive_payjoin_main():
 
 
 @wrap_main
-def _main():
+async def _main():
     await receive_payjoin_main()
     jmprint('done')
 

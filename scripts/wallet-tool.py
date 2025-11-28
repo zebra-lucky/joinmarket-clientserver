@@ -5,25 +5,19 @@ import sys
 
 import jmclient  # install asyncioreactor
 from twisted.internet import reactor
+from scripts_support import wrap_main
 
 from jmbase import jmprint
 from jmclient import wallet_tool_main
 
 
+@wrap_main
 async def _main():
-    try:
-        res = await wallet_tool_main("wallets")
-        if res:
-            jmprint(res, "success")
-        else:
-            jmprint("Finished", "success")
-    except SystemExit as e:
-        return e.args[0] if e.args else None
-    finally:
-        for task in asyncio.all_tasks():
-            task.cancel()
-        if reactor.running:
-            reactor.stop()
+    res = await wallet_tool_main("wallets")
+    if res:
+        jmprint(res, "success")
+    else:
+        jmprint("Finished", "success")
 
 
 if __name__ == "__main__":

@@ -104,12 +104,8 @@ class FrostIPCServer(IPCBase):
                 frost_client = wallet.client_factory.client
                 frost_client.dkg_gen_list.append(
                     (mixdepth, address_type, index))
-                client.dkg_gen()
-                if session_id == b'\x00'*32:
-                    new_pubkey = pub
-                else:
-                    new_pubkey = dkg.find_dkg_pubkey(
-                        mixdepth, address_type, index)
+                await client.dkg_gen()
+                new_pubkey = dkg.find_dkg_pubkey(mixdepth, address_type, index)
             if new_pubkey:
                 await self.send_dkg_pubkey(msg_id, new_pubkey)
             else:

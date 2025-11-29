@@ -11,6 +11,7 @@ from sqlite3 import Cursor, Row
 from typing import Callable, List, Optional
 import urllib.parse as urlparse
 
+
 # JoinMarket version
 JM_CORE_VERSION = '0.9.12dev'
 
@@ -25,9 +26,8 @@ EXIT_ARGERROR = 2
 
 
 def twisted_sys_exit(status):
-    from twisted.internet import reactor
-    if reactor.running:
-        reactor.stop()
+    from .twisted_utils import stop_reactor
+    stop_reactor()
     sys.exit(status)
 
 

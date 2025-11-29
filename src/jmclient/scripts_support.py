@@ -6,7 +6,7 @@ from functools import wraps
 
 from twisted.internet import reactor
 
-from jmbase import jmprint
+from jmbase import jmprint, stop_reactor
 
 
 def wrap_main(func):
@@ -18,13 +18,9 @@ def wrap_main(func):
         except SystemExit as e:
             return e.args[0] if e.args else None
         finally:
-            try:
-                for task in asyncio.all_tasks():
-                    task.cancel()
-                if reactor.running:
-                    reactor.stop()
-            except Exception as e:
-                jmprint(f'Errors during reactor cleaenup/stop: {e}', 'debug')
+            for task in asyncio.all_tasks():
+                task.cancel()
+            stop_reactor()
 
     return func_wrapper
 

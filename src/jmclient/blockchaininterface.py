@@ -442,7 +442,7 @@ class BitcoinCoreInterface(BlockchainInterface):
             log.error("Failure of RPC connection to Bitcoin Core. "
                       "Application cannot continue, shutting down.")
             stop_reactor()
-            return None
+            twisted_sys_exit(EXIT_FAILURE)
         # note that JsonRpcError is not caught here; for some calls, we
         # have specific behaviour requirements depending on these errors,
         # so this is handled elsewhere in BitcoinCoreInterface.

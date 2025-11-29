@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+import datetime
 from optparse import OptionParser
 from numbers import Integral
 from collections import Counter, defaultdict
@@ -479,7 +479,9 @@ async def wallet_showutxos(wallet_service: WalletService, showprivkey: bool,
             if showprivkey:
                 unsp[us]['privkey'] = wallet_service.get_wif_path(av['path'])
             if locktime:
-                unsp[us]["locktime"] = str(datetime.utcfromtimestamp(0) + timedelta(seconds=locktime))
+                unsp[us]["locktime"] = str(
+                    datetime.datetime.fromtimestamp(0, datetime.UTC) +
+                    datetime.timedelta(seconds=locktime))
 
     used_commitments, external_commitments = podle.get_podle_commitments()
     for u, ec in external_commitments.items():
@@ -625,13 +627,15 @@ async def wallet_display(wallet_service, showprivkey, displayall=False,
                 path = wallet_service.get_path(m, address_type, timenumber)
                 addr = await wallet_service.get_address_from_path(path)
                 label = wallet_service.get_address_label(addr)
-                timelock = datetime.utcfromtimestamp(0) + timedelta(seconds=path[-1])
+                timelock = (datetime.datetime.fromtimestamp(0, datetime.UTC) +
+                            datetime.timedelta(seconds=path[-1]))
 
                 balance = sum([utxodata["value"] for _, utxodata in
                     utxos[m].items() if path == utxodata["path"]])
 
-                status = timelock.strftime("%Y-%m-%d") + " [" + (
-                    "LOCKED" if datetime.now() < timelock else "UNLOCKED") + "]"
+                status = (timelock.strftime("%Y-%m-%d") + " [" + (
+                    "LOCKED" if datetime.datetime.now(datetime.UTC) < timelock
+                    else "UNLOCKED") + "]")
                 status += get_utxo_status_string(utxos[m], utxos_enabled[m], path)
 
                 privkey = ""
@@ -947,10 +951,18 @@ async def wallet_fetch_history(wallet, options):
         return btc.sat_to_str(v) if v != -1 else '#' + ' '*10
     def print_row(index, time, tx_type, amount, delta, balance, cj_n,
                   total_fees, utxo_count, mixdepth_src, mixdepth_dst, txid):
-        data = [index, datetime.fromtimestamp(time).strftime("%Y-%m-%d %H:%M"),
-                tx_type, btc.sat_to_str(abs(amount)), btc.sat_to_str_p(delta),
-                btc.sat_to_str(balance), skip_n1(cj_n), sat_to_str_na(total_fees),
-                '% 3d' % utxo_count, skip_n1(mixdepth_src), skip_n1(mixdepth_dst)]
+        data = [
+            index,
+            datetime.datetime.fromtimestamp(time).strftime("%Y-%m-%d %H:%M"),
+            tx_type, btc.sat_to_str(abs(amount)),
+            btc.sat_to_str_p(delta),
+            btc.sat_to_str(balance),
+            skip_n1(cj_n),
+            sat_to_str_na(total_fees),
+            '% 3d' % utxo_count,
+            skip_n1(mixdepth_src),
+            skip_n1(mixdepth_dst)
+        ]
         if options.verbosity % 2 == 0: data += [txid]
         jmprint(s().join(map('"{}"'.format, data)), "info")
 
@@ -1152,8 +1164,9 @@ async def wallet_fetch_history(wallet, options):
 
     bestblockhash = jm_single().bc_interface.get_best_block_hash()
     now = jm_single().bc_interface.get_block_time(bestblockhash)
-    jmprint('        %s best block is %s' % (datetime.fromtimestamp(now)
-        .strftime("%Y-%m-%d %H:%M"), bestblockhash))
+    jmprint('        %s best block is %s' % (
+            datetime.datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M"),
+            bestblockhash))
     total_profit = float(balance - sum(deposits)) / float(100000000)
     jmprint('total profit = %.8f BTC' % total_profit)
 
@@ -1440,8 +1453,9 @@ async def wallet_gettimelockaddress(wallet, locktime_string):
         jmprint("Error: not a fidelity bond wallet", "error")
         return ""
 
-    lock_datetime = datetime.strptime(locktime_string, "%Y-%m")
-    if jm_single().config.get("BLOCKCHAIN", "network") == "mainnet" and lock_datetime <= datetime.now():
+    lock_datetime = datetime.datetime.strptime(locktime_string, "%Y-%m")
+    if (jm_single().config.get("BLOCKCHAIN", "network") == "mainnet"
+            and lock_datetime <= datetime.datetime.now()):
         jmprint("Error: locktime must be a future date", "error")
         return ""
 

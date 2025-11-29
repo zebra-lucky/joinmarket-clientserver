@@ -11,7 +11,7 @@ import os
 import threading
 import time
 import sys
-from datetime import datetime, timedelta
+import datetime
 from decimal import Decimal
 from optparse import OptionParser
 from typing import Tuple, Union
@@ -371,13 +371,18 @@ class OrderbookPageRequestHeader(http.server.SimpleHTTPRequestHandler):
                 bond_value_str = bond_value_to_str(sat_to_unit_power(bond_value,
                     2 * bitcoin_unit_to_power(html.unescape(btc_unit))),
                     html.unescape(btc_unit))
-                conf_time_str = str(datetime.utcfromtimestamp(0) + timedelta(seconds=conf_time))
+                conf_time_str = (
+                    str(datetime.datetime.fromtimestamp(0, datetime.UTC) +
+                    datetime.timedelta(seconds=conf_time)))
                 utxo_value_str = sat_to_unit(utxo_data["value"], html.unescape(btc_unit))
             bondtable += ("<tr>"
                 + elem(bond_data.maker_nick)
                 + elem(bintohex(bond_data.utxo[0]) + ":" + str(bond_data.utxo[1]))
                 + elem(bond_value_str)
-                + elem((datetime.utcfromtimestamp(0) + timedelta(seconds=bond_data.locktime)).strftime("%Y-%m-%d"))
+                + elem((
+                            datetime.datetime.fromtimestamp(0, datetime.UTC) +
+                            datetime.timedelta(seconds=bond_data.locktime)
+                       ).strftime("%Y-%m-%d"))
                 + elem(utxo_value_str)
                 + elem(conf_time_str)
                 + elem(str(bond_data.cert_expiry*RETARGET_INTERVAL))

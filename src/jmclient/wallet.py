@@ -11,7 +11,7 @@ import base64
 import json
 from math import ceil
 from binascii import hexlify, unhexlify
-from datetime import datetime, timedelta
+import datetime
 from calendar import timegm
 from copy import deepcopy
 from mnemonic import Mnemonic as MnemonicParent
@@ -848,7 +848,8 @@ class BaseWallet(object):
                               "storage.")
 
         if not timestamp:
-            timestamp = datetime.now().strftime('%Y/%m/%d %H:%M:%S')
+            timestamp = datetime.datetime.now(
+                datetime.UTC).strftime('%Y/%m/%d %H:%M:%S')
 
         storage.data[b'network'] = network.encode('ascii')
         storage.data[b'created'] = timestamp.encode('ascii')
@@ -3040,7 +3041,9 @@ class FidelityBondMixin(object):
             raise ValueError()
         year = cls.TIMELOCK_EPOCH_YEAR + (timenumber*cls.TIMENUMBER_UNIT) // cls.MONTHS_IN_YEAR
         month = cls.TIMELOCK_EPOCH_MONTH + (timenumber*cls.TIMENUMBER_UNIT) % cls.MONTHS_IN_YEAR
-        return timegm(datetime(year, month, *cls.TIMELOCK_DAY_AND_SHORTER).timetuple())
+        return timegm(
+            datetime.datetime(
+                year, month, *cls.TIMELOCK_DAY_AND_SHORTER).timetuple())
 
     @classmethod
     def datetime_to_time_number(cls, dt):
@@ -3065,7 +3068,8 @@ class FidelityBondMixin(object):
         """
         #workaround for the year 2038 problem on 32 bit systems
         #see https://stackoverflow.com/questions/10588027/converting-timestamps-larger-than-maxint-into-datetime-objects
-        dt = datetime.utcfromtimestamp(0) + timedelta(seconds=timestamp)
+        dt = (datetime.datetime.fromtimestamp(0, datetime.UTC) +
+              datetime.timedelta(seconds=timestamp))
         return cls.datetime_to_time_number(dt)
 
     @classmethod
@@ -3107,7 +3111,9 @@ class FidelityBondMixin(object):
         path = self.script_to_path(script)
         if not self.is_timelocked_path(path):
             return
-        if (datetime.utcfromtimestamp(0) + timedelta(seconds=path[-1])) > datetime.now():
+        if (datetime.datetime.fromtimestamp(0, datetime.UTC) +
+                datetime.timedelta(seconds=path[-1]) >
+                datetime.datetime.now(datetime.UTC)):
             #freeze utxo if its timelock is in the future
             self.disable_utxo(txid, index, disable=True)
 
@@ -3708,7 +3714,8 @@ class FrostWallet(BIP39WalletMixin, BIP32PurposedFrostMixin):
                               f'recovery storage wallet type: {cls.TYPE}.')
 
         if not timestamp:
-            timestamp = datetime.now().strftime('%Y/%m/%d %H:%M:%S')
+            timestamp = datetime.datetime.now(
+                datetime.UTC).strftime('%Y/%m/%d %H:%M:%S')
 
         dkg_storage.data[b'network'] = bnetwork
         dkg_storage.data[b'created'] = timestamp.encode('ascii')

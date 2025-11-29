@@ -74,6 +74,7 @@ The method is one of the following:
 (dkgrm) rm FrostWallet dkg data by session_id list
 (recdkgls) display Recovery DKG File data
 (recdkgrm) rm Recovery DKG File data by session_id list
+(testdkg) run only as test of DKG process
 (testfrost) run only as test of FROST signing
 """
     parser = OptionParser(usage='usage: %prog [options] [wallet file] [method] [args..]',
@@ -1785,8 +1786,9 @@ async def wallet_tool_main(wallet_root_path):
                               'dkgls', 'dkgrm', 'recdkgls', 'recdkgrm']
     frost_noscan_methods = ['hostpubkey', 'servefrost', 'dkgrecover',
                             'dkgls', 'dkgrm', 'recdkgls', 'recdkgrm',
-                            'testfrost']
-    frost_readonly_methods = ['hostpubkey', 'dkgls', 'recdkgls', 'testfrost']
+                            'testdkg', 'testfrost']
+    frost_readonly_methods = ['hostpubkey', 'dkgls', 'recdkgls',
+                              'testdkg', 'testfrost']
     noscan_methods.extend(frost_noscan_methods)
     readonly_methods.extend(frost_readonly_methods)
 
@@ -1965,6 +1967,14 @@ async def wallet_tool_main(wallet_root_path):
         await ipc_server.async_init()
         await ipc_server.serve_forever()
         return
+    elif method == "testdkg":
+        if not isinstance(wallet, FrostWallet):
+            return 'Command "testdgk" used only for FROST wallets'
+        md = address_type = index = 0
+        pubkey = await wallet.ipc_client.get_dkg_pubkey(
+            md, address_type, index, session_id=b'\x00'*32)
+        if pubkey:
+            return f'pubkey: {pubkey.hex()}'
     elif method == "testfrost":
         if not isinstance(wallet, FrostWallet):
             return 'Command "testfrost" used only for FROST wallets'

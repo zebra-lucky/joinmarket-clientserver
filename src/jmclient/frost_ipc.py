@@ -86,18 +86,30 @@ class FrostIPCServer(IPCBase):
                 jlog.error(f'FrostIPCServer.process_msgs: {repr(e)}')
             await asyncio.sleep(0.1)
 
-    async def on_get_dkg_pubkey(self, msg_id, mixdepth, address_type, index):
+    async def on_get_dkg_pubkey(self, msg_id, mixdepth, address_type, index,
+                                session_id=None):
         try:
             wallet = self.wallet
             dkg = wallet.dkg
-            new_pubkey = dkg.find_dkg_pubkey(mixdepth, address_type, index)
-            if new_pubkey is None:
+            if session_id is not None:
                 client = wallet.client_factory.getClient()
                 frost_client = wallet.client_factory.client
                 frost_client.dkg_gen_list.append(
                     (mixdepth, address_type, index))
-                await client.dkg_gen()
+                new_pubkey = await client.dkg_gen(session_id=session_id)
+            else:
                 new_pubkey = dkg.find_dkg_pubkey(mixdepth, address_type, index)
+            if session_id is None and new_pubkey is None:
+                client = wallet.client_factory.getClient()
+                frost_client = wallet.client_factory.client
+                frost_client.dkg_gen_list.append(
+                    (mixdepth, address_type, index))
+                client.dkg_gen()
+                if session_id == b'\x00'*32:
+                    new_pubkey = pub
+                else:
+                    new_pubkey = dkg.find_dkg_pubkey(
+                        mixdepth, address_type, index)
             if new_pubkey:
                 await self.send_dkg_pubkey(msg_id, new_pubkey)
             else:
@@ -203,7 +215,8 @@ class FrostIPCClient(IPCBase):
         if fut:
             fut.set_result(data)
 
-    async def get_dkg_pubkey(self, mixdepth, address_type, index):
+    async def get_dkg_pubkey(self, mixdepth, address_type, index,
+                             session_id=None):
         jlog.debug(f'FrostIPCClient.get_dkg_pubkey for mixdepth={mixdepth}, '
                    f'address_type={address_type}, index={index}')
         try:
@@ -211,7 +224,7 @@ class FrostIPCClient(IPCBase):
             msg_dict = {
                 'msg_id': self.msg_id,
                 'cmd': 'get_dkg_pubkey',
-                'data': (mixdepth, address_type, index),
+                'data': (mixdepth, address_type, index, session_id),
             }
             self.sw.write(self.encrypt_msg(msg_dict))
             await self.sw.drain()

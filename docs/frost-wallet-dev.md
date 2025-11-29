@@ -72,6 +72,7 @@ to be run permanently)
 - `dkgrm`: rm FrostWallet DKG data by `session_id` list
 - `recdkgls`: display Recovery DKG File data
 - `recdkgrm`: rm Recovery DKG File data by `session_id` list
+- `testdkg`: run only as test of DKG process
 - `testfrost`: run only as test of FROST signing
 
 ## Description of `jmclient/frost_clients.py`

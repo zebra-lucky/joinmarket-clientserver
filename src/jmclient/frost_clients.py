@@ -155,13 +155,14 @@ class DKGClient:
             self.current_dkg_gen = None
         return self.current_dkg_gen
 
-    def dkg_init(self, mixdepth, address_type, index):
+    def dkg_init(self, mixdepth, address_type, index, session_id=None):
         try:
             wallet = self.wallet_service.wallet
             hostseckey = wallet._hostseckey[:32]
             hostpubkey = hostpubkey_gen(hostseckey)
             hostpubkeyhash = sha256(hostpubkey).digest()
-            session_id = sha256(os.urandom(32)).digest()
+            if session_id is None:
+                session_id = sha256(os.urandom(32)).digest()
             coordinator = DKGCoordinator(mixdepth=mixdepth,
                                          address_type=address_type,
                                          index=index,
@@ -392,6 +393,10 @@ class DKGClient:
             session_id = session.session_id
             coordinator = self.dkg_coordinators.get(session_id)
             coord_hostpubkey = session.coord_hostpubkey
+            if not coordinator:
+                self.dkg_sessions.pop(session_id)
+            if session_id == b'\x00'*32:
+                return True
             if coordinator:
                 dkg_man.add_coordinator_data(
                     session_id=session_id,
@@ -408,7 +413,6 @@ class DKGClient:
                     t=self.t,
                     recovery_data=session.recovery_data,
                     ext_recovery=ext_recovery)
-                self.dkg_sessions.pop(session_id)
             return True
         except Exception as e:
             jlog.error(f'finalize: {repr(e)}')

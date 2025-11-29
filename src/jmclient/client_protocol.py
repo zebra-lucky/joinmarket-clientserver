@@ -405,13 +405,12 @@ class JMClientProtocol(BaseClientProtocol):
 
     """DKG specifics
     """
-    async def dkg_gen(self):
+    async def dkg_gen(self, session_id=None):
         jlog.debug('Coordinator call dkg_gen')
         client = self.factory.client
         md_type_idx = None
-        session_id = None
         session = None
-
+        pub = None
         while True:
             if md_type_idx is None:
                 md_type_idx = await client.dkg_gen()
@@ -419,8 +418,9 @@ class JMClientProtocol(BaseClientProtocol):
                     jlog.debug('finished dkg_gen execution')
                     break
 
-            if session_id is None:
-                session_id, _, session = self.dkg_init(*md_type_idx)
+            if session_id is None or session_id == b'\x00'*32:
+                session_id, _, session = self.dkg_init(
+                    *md_type_idx, session_id=session_id)
                 if session_id is None:
                     jlog.warning('could not get session_id from dkg_init}')
                     await asyncio.sleep(5)
@@ -438,13 +438,14 @@ class JMClientProtocol(BaseClientProtocol):
                 session = None
                 client.dkg_gen_list.pop(0)
                 continue
+        return pub
 
-    def dkg_init(self, mixdepth, address_type, index):
+    def dkg_init(self, mixdepth, address_type, index, session_id=None):
         jlog.debug(f'Coordinator call dkg_init '
                    f'({mixdepth}, {address_type}, {index})')
         client = self.factory.client
-        hostpubkeyhash, session_id, sig = client.dkg_init(mixdepth,
-                                                          address_type, index)
+        hostpubkeyhash, session_id, sig = client.dkg_init(
+            mixdepth, address_type, index, session_id=session_id)
         coordinator = client.dkg_coordinators.get(session_id)
         session = client.dkg_sessions.get(session_id)
         if session_id and session and coordinator:

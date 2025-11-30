@@ -115,6 +115,83 @@ Responders on the commands in the `jmclient/client_protocol.py`,
 
 In the FROST sessions the party which need new signature is named Coordinator.
 
+## Details on DKG message channel commands
+
+**dkginit**: public broadcast command from coordinator to request DKG
+exchange
+
+```
+self.mcc.pubmsg(f'!dkginit {hostpubkeyhash} {session_id} {sig}')
+```
+
+- `hostpubkeyhash`: sha256 hash of wallet `hostpubkey` to identify
+wallet to other DKG parties
+- `session_id`: random 32 bytes to identify DKG session
+- `sig`: Schnorr signature on `session_id` to verify with `hostpubkey` to
+authenticate wallet
+
+**dkgpmsg1**: private unencrypted command from parties to authenticate and
+send EncPedPop `pmsg1` to coordinator
+
+```
+msg = f'{hostpubkeyhash} {session_id} {sig} {pmsg1}'
+self.mcc.prepare_privmsg(nick, "dkgpmsg1", msg)
+```
+
+- `hostpubkeyhash`: sha256 hash of wallet `hostpubkey` to identify
+wallet to coordinator
+- `session_id`: 32 bytes to idenify DKG session
+- `sig`: Schnorr signature on `session_id` to verify with `hostpubkey` to
+authenticate wallet
+- `pmsg1`: EncPedPop participants step1 message
+
+**dkgcmsg1**: private unencrypted command from coordinator to send
+EncPedPop `cmsg1` to DKG parties
+
+```
+msg = f'{session_id} {cmsg1}'
+self.mcc.prepare_privmsg(nick, "dkgcmsg1", msg)
+```
+
+- `session_id`: 32 bytes to idenify DKG session
+- `cmsg1`: EncPedPop coordinator step1 message
+
+**dkgpmsg2**: private unencrypted command from parties to send
+EncPedPop `pmsg2` to coordinator
+
+```
+msg = f'{session_id} {pmsg2}'
+self.mcc.prepare_privmsg(nick, "dkgpmsg2", msg)
+```
+
+- `session_id`: 32 bytes to idenify DKG session
+- `pmsg2`: EncPedPop participants step2 message
+
+**dkgcmsg2**: private unencrypted command from coordinator to send
+EncPedPop `cmsg2` and encrypted `ext_recovery` to DKG parties
+
+```
+msg = f'{session_id} {cmsg2} {ext_recovery}'
+self.mcc.prepare_privmsg(nick, "dkgcmsg2", msg)
+```
+
+- `session_id`: 32 bytes to idenify DKG session
+- `cmsg2`: EncPedPop coordinator step2 message
+- `ext_recovery`: byte encoded and encrypted with `hostpubkey` tuple
+`(mixdepth, address_type, index)`, which sent to DKG parties to write
+with DKG recovery data
+
+**dkgfinalized**: private unencrypted command from parties to coordinator
+to confirm DKG session finished and all DKG data saved together with
+`recovery data`, `ext_recovery`
+
+```
+msg = f'{session_id}'
+self.mcc.prepare_privmsg(nick, "dkgfinalized", msg)
+```
+
+- `session_id`: 32 bytes to idenify DKG session
+
 ## Details on FROST message channel commands
 
 **frostreq**: public broadcast command from coordinator to request encrypted

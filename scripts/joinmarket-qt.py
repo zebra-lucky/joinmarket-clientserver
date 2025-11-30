@@ -2646,6 +2646,8 @@ async def main():
     mainWindow.resize(600, 500)
     if get_network() == 'testnet':
         suffix = ' - Testnet'
+    elif get_network() == 'testnet4':
+        suffix = ' - Testnet4'
     elif get_network() == 'signet':
         suffix = ' - Signet'
     else:

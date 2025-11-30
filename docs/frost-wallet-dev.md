@@ -102,17 +102,102 @@ JM channels. Uses reference FROST code from
 https://github.com/siv2r/bip-frost-signing/, placed in the
 `jmfrost/frost_ref` package.
 
-Uses channel level commands `frostinit`, `frostround1`, `frostround2`,
-`frostagg1` added to `jmdaemon/protocol.py`.
+Uses channel level commands `frostreq`, `frostack`, `frostinit`, `frostround1`,
+`frostagg1`, `frostround2` added to `jmdaemon/protocol.py`.
 
-Commands in the `jmbase/commands.py`: `JMFROSTInit`, `JMFROSTRound1`,
-`JMFROSTAgg1`, `JMFROSTRound2`, `JMFROSTInitSeen`, `JMFROSTRound1Seen`,
+Commands in the `jmbase/commands.py`: `JMFROSTReq`, `JMFROSTAck`,
+`JMFROSTInit`, `JMFROSTRound1`, `JMFROSTAgg1`, `JMFROSTRound2`,
+`JMFROSTReqSeen`, `JMFROSTAckSeen`, `JMFROSTInitSeen`, `JMFROSTRound1Seen`,
 `JMFROSTAgg1Seen`, `JMFROSTRound2Seen`.
 
 Responders on the commands in the `jmclient/client_protocol.py`,
 `jmdaemon/daemon_protocol.py`.
 
 In the FROST sessions the party which need new signature is named Coordinator.
+
+## Details on FROST message channel commands
+
+**frostreq**: public broadcast command from coordinator to request encrypted
+FROST exchange
+
+```
+req_msg = f'!frostreq {hostpubkeyhash} {sig} {session_id} {dh_pubk}'
+self.mcc.pubmsg(req_msg)
+```
+
+- `hostpubkeyhash`: sha256 hash of wallet `hostpubkey` to identify
+wallet to other FROST parties
+- `sig`: Schnorr signature on `session_id` to verify with `hostpubkey` to
+authenticate wallet
+- `session_id`: random 32 bytes to identify FROST session
+- `dh_pubk`: ECDH public key to create encrypted private messages for other
+FROST commands
+
+**frostack**: private unencrypted command from parties to acknowledge encrypted
+FROST exchange
+
+```
+ack_msg = f'{hostpubkeyhash} {sig} {session_id} {dh_pubk}
+self.mcc.prepare_privmsg(nick, 'frostack', ack_msg)
+```
+
+- `hostpubkeyhash`: sha256 hash of wallet `hostpubkey` to identify
+wallet for coordinator
+- `sig`: Schnorr signature on `session_id` to verify with `hostpubkey` to
+authenticate wallet
+- `session_id`: 32 bytes to idenify FROST session
+- `dh_pubk`: ECDH public key to create encrypted private messages for other
+FROST commands
+
+**frostinit**: private encrypted command from coordinator to initiate
+FROST exchange
+
+```
+init_msg = f'{session_id}'
+self.mcc.prepare_privmsg(nick, 'frostinit', init_msg)
+```
+
+- `session_id`: 32 bytes to idenify FROST session
+
+**frostround1**: private encrypted command from parties to send `pub_nonce`
+part of FROST exchange
+
+```
+round1_msg = f'{session_id} {hostpubkeyhash} {pub_nonce}'
+self.mcc.prepare_privmsg(nick, "frostround1", round1_msg)
+```
+
+- `session_id`: 32 bytes to idenify FROST session
+- `hostpubkeyhash`: sha256 hash of wallet `hostpubkey` to identify
+wallet for coordinator
+- `pub_nonce`: public part of `sec_nonce`/`pub_nonce` pair
+
+**frostagg1**: private encrypted command from coorinator to send aggregated
+nonces data, DKG session id to get key data, ids of sign parties and
+message to sign
+
+```
+agg1_msg = f'{session_id} {nonce_agg} {dkg_session_id} {ids} {msg}'
+self.mcc.prepare_privmsg(nick, "frostagg1", agg1_msg)
+```
+
+- `session_id`: 32 bytes to idenify FROST session
+- `nonce_agg`: aggregated pub nonces data
+- `dkg_session_id`: bytes to idenify DKG session where key data for FROST
+whas generated
+- `ids`: FROST sign parties ids
+- `msg`: 32 bytes message to sign
+
+**frostround2**: private encrypted command from parties to send partial
+signature for coordinator
+
+```
+msg = f'{session_id} {partial_sig}'
+self.mcc.prepare_privmsg(nick, "frostround2", msg)
+```
+
+- `session_id`: 32 bytes to idenify FROST session
+- `partial_sig`: partial FROST signature agregated later on coordinator
 
 ## Recovery storage, recovery data file.
 ChillDKG recovery data is placed in the unencrypted recovery file with

@@ -212,17 +212,14 @@ class DummyFrostJMClientProtocol:
         (
             nick2,
             session_id,
-            hostpubkeyhash,
             pub_nonce
         ) = client.on_frost_init(nick, session_id)
         if pub_nonce:
             pc = self.party_clients[nick]
             session_id = bytes.fromhex(session_id)
-            await pc.on_frost_round1(
-                self.nick, session_id, hostpubkeyhash, pub_nonce)
+            await pc.on_frost_round1(self.nick, session_id, pub_nonce)
 
-    async def on_frost_round1(self, nick, session_id,
-                              hostpubkeyhash, pub_nonce):
+    async def on_frost_round1(self, nick, session_id, pub_nonce):
         client = self.factory.client
         (
             ready_nicks,
@@ -230,8 +227,7 @@ class DummyFrostJMClientProtocol:
             dkg_session_id,
             ids,
             msg
-        ) = client.on_frost_round1(
-            nick, session_id, hostpubkeyhash, pub_nonce)
+        ) = client.on_frost_round1(nick, session_id, pub_nonce)
         if ready_nicks and nonce_agg:
             for party_nick in ready_nicks:
                 pc = self.party_clients[nick]

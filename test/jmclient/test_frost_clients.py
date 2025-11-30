@@ -736,12 +736,10 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         (
             nick1,
             session_id2_hex,
-            hostpubkeyhash2_hex,
             pub_nonce
         ) = self.fc2.on_frost_init(self.nick1, session_id)
         assert nick1 == self.nick1
         assert session_id2_hex and len(session_id2_hex) == 64
-        assert hostpubkeyhash2_hex and len(hostpubkeyhash2_hex) == 64
         assert bytes.fromhex(session_id2_hex) == session_id
         assert pub_nonce and len(pub_nonce) == 66
 
@@ -749,11 +747,9 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         (
             nick1,
             session_id2_hex,
-            hostpubkeyhash2_hex,
             pub_nonce2
         ) = self.fc2.on_frost_init(self.nick1, session_id)
-        print('V'*80, nick1, session_id2_hex, hostpubkeyhash2_hex, pub_nonce2)
-        for v in [nick1, session_id2_hex, hostpubkeyhash2_hex, pub_nonce2]:
+        for v in [nick1, session_id2_hex, pub_nonce2]:
             assert v is None
 
     def test_frost_round1(self):
@@ -775,7 +771,6 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         (
             nick1,
             session_id2_hex,
-            hostpubkeyhash2_hex,
             pub_nonce2
         ) = self.fc2.on_frost_init(self.nick1, session_id)
 
@@ -811,14 +806,12 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         (
             nick1,
             session_id2_hex,
-            hostpubkeyhash2_hex,
             pub_nonce2
         ) = self.fc2.on_frost_init(self.nick1, session_id)
 
         (
             nick1,
             session_id3_hex,
-            hostpubkeyhash3_hex,
             pub_nonce3
         ) = self.fc3.on_frost_init(self.nick1, session_id)
 
@@ -830,19 +823,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
             ids,
             msg
         ) = self.fc1.on_frost_round1(
-            self.nick2, b'\xaa'*32, hostpubkeyhash2_hex, pub_nonce2)
-        for v in [ready_list, nonce_agg, dkg_session_id, ids, msg]:
-            assert v is None
-
-        # unknown pubkeyhash
-        (
-            ready_list,
-            nonce_agg,
-            dkg_session_id,
-            ids,
-            msg
-        ) = self.fc1.on_frost_round1(
-            self.nick2, session_id, 'bb'*32, pub_nonce2)
+            self.nick2, b'\xaa'*32, pub_nonce2)
         for v in [ready_list, nonce_agg, dkg_session_id, ids, msg]:
             assert v is None
 
@@ -853,7 +834,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
             ids,
             msg
         ) = self.fc1.on_frost_round1(
-            self.nick2, session_id, hostpubkeyhash2_hex, pub_nonce2)
+            self.nick2, session_id, pub_nonce2)
         assert ready_list == set([self.nick2])
         assert nonce_agg and len(nonce_agg)== 66
         assert dkg_session_id and dkg_session_id == self.dkg_session_id
@@ -868,7 +849,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
             ids,
             msg
         ) = self.fc1.on_frost_round1(
-            self.nick3, session_id, hostpubkeyhash3_hex, pub_nonce3)
+            self.nick3, session_id, pub_nonce3)
         for v in [ready_list, nonce_agg, dkg_session_id, ids, msg]:
             assert v is None
 
@@ -891,7 +872,6 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         (
             nick1,
             session_id2_hex,
-            hostpubkeyhash2_hex,
             pub_nonce2
         ) = self.fc2.on_frost_init(self.nick1, session_id)
 
@@ -902,7 +882,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
             ids,
             msg
         ) = self.fc1.on_frost_round1(
-            self.nick2, session_id, hostpubkeyhash2_hex, pub_nonce2)
+            self.nick2, session_id, pub_nonce2)
 
         # fail on unknown session_id
         (
@@ -956,7 +936,6 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         (
             nick1,
             session_id2_hex,
-            hostpubkeyhash2_hex,
             pub_nonce2
         ) = self.fc2.on_frost_init(self.nick1, session_id)
 
@@ -967,7 +946,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
             ids,
             msg
         ) = self.fc1.on_frost_round1(
-            self.nick2, session_id, hostpubkeyhash2_hex, pub_nonce2)
+            self.nick2, session_id, pub_nonce2)
 
         # fail on unknown session_id
         partial_sig = self.fc2.frost_round2(
@@ -1005,7 +984,6 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
         (
             nick1,
             session_id2_hex,
-            hostpubkeyhash2_hex,
             pub_nonce2
         ) = self.fc2.on_frost_init(self.nick1, session_id)
 
@@ -1016,7 +994,7 @@ class FROSTClientTestCase(DKGClientTestCaseBase):
             ids,
             msg
         ) = self.fc1.on_frost_round1(
-            self.nick2, session_id, hostpubkeyhash2_hex, pub_nonce2)
+            self.nick2, session_id, pub_nonce2)
 
         partial_sig = self.fc2.frost_round2(
             session_id, nonce_agg, self.dkg_session_id, ids, msg)

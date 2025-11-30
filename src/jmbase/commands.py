@@ -152,7 +152,6 @@ class JMFROSTRound1(JMCommand):
     arguments = [
         (b'nick', Unicode()),
         (b'session_id', Unicode()),
-        (b'hostpubkeyhash', Unicode()),
         (b'pub_nonce', Unicode()),
     ]
 
@@ -365,7 +364,6 @@ class JMFROSTRound1Seen(JMCommand):
     arguments = [
         (b'nick', Unicode()),
         (b'session_id', Unicode()),
-        (b'hostpubkeyhash', Unicode()),
         (b'pub_nonce', Unicode()),
     ]
 

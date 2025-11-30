@@ -641,20 +641,17 @@ class JMClientProtocol(BaseClientProtocol):
 
         client = self.factory.client
         session_id = hextobin(session_id)
-        nick, session_id, pubkeyhash, pub_nonce = \
-            client.on_frost_init(nick, session_id)
+        nick, session_id, pub_nonce = client.on_frost_init(nick, session_id)
         if pub_nonce:
             pub_nonce_b64 = base64.b64encode(pub_nonce).decode('ascii')
             d = self.callRemote(commands.JMFROSTRound1,
                                 nick=nick, session_id=session_id,
-                                hostpubkeyhash=pubkeyhash,
                                 pub_nonce=pub_nonce_b64)
             self.defaultCallbacks(d)
         return {'accepted': True}
 
     @commands.JMFROSTRound1Seen.responder
-    def on_JM_FROST_ROUND1_SEEN(self, nick, session_id,
-                                hostpubkeyhash, pub_nonce):
+    def on_JM_FROST_ROUND1_SEEN(self, nick, session_id, pub_nonce):
         wallet = self.client.wallet_service.wallet
         if not isinstance(wallet, FrostWallet) or wallet._dkg is None:
             return {'accepted': True}
@@ -663,8 +660,7 @@ class JMClientProtocol(BaseClientProtocol):
         bin_session_id = hextobin(session_id)
         pub_nonce = base64.b64decode(pub_nonce)
         ready_nicks, nonce_agg, dkg_session_id, ids, msg = \
-            client.on_frost_round1(
-                nick, bin_session_id, hostpubkeyhash, pub_nonce)
+            client.on_frost_round1(nick, bin_session_id, pub_nonce)
         if ready_nicks and nonce_agg:
             for nick in ready_nicks:
                 self.frost_agg1(nick, session_id, nonce_agg,

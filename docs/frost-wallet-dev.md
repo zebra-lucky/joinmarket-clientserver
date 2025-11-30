@@ -240,13 +240,11 @@ self.mcc.prepare_privmsg(nick, 'frostinit', init_msg)
 part of FROST exchange
 
 ```
-round1_msg = f'{session_id} {hostpubkeyhash} {pub_nonce}'
+round1_msg = f'{session_id} pub_nonce}'
 self.mcc.prepare_privmsg(nick, "frostround1", round1_msg)
 ```
 
 - `session_id`: 32 bytes to idenify FROST session
-- `hostpubkeyhash`: sha256 hash of wallet `hostpubkey` to identify
-wallet for coordinator
 - `pub_nonce`: public part of `sec_nonce`/`pub_nonce` pair
 
 **frostagg1**: private encrypted command from coorinator to send aggregated

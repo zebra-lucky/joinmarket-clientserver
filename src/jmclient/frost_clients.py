@@ -796,12 +796,20 @@ class FROSTClient(DKGClient):
 
     def on_frost_ack(self, nick, hostpubkeyhash, sig, session_id):
         try:
+            coordinator = self.frost_coordinators.get(session_id)
+            if not coordinator:
+                raise Exception(f'session {session_id.hex()} not found')
             pubkey = self.find_pubkey_by_pubkeyhash(hostpubkeyhash)
             if not pubkey:
                 raise Exception(f'pubkey for {hostpubkeyhash} not found')
             xpubkey = XOnlyPubKey(pubkey[1:])
             if not xpubkey.verify_schnorr(session_id, hextobin(sig)):
                 raise Exception('signature verification failed')
+            if pubkey in coordinator.parties:
+                jlog.debug(f'pubkey {pubkey.hex()} already in'
+                           f' coordinator parties')
+                return False
+            coordinator.parties[pubkey] = nick
             return True
         except Exception as e:
             jlog.error(f'on_frost_ack: {repr(e)}')
@@ -815,15 +823,11 @@ class FROSTClient(DKGClient):
             if session.sec_nonce:
                 raise Exception(f'session.sec_nonce already set '
                                 f'for {session_id.hex()}')
-            wallet = self.wallet_service.wallet
-            hostseckey = wallet._hostseckey[:32]
-            hostpubkey = hostpubkey_gen(hostseckey)
-            pubkeyhash = sha256(hostpubkey).digest()
             pub_nonce = self.frost_round1(session_id)
-            return (nick, session_id.hex(), pubkeyhash.hex(), pub_nonce)
+            return (nick, session_id.hex(), pub_nonce)
         except Exception as e:
             jlog.error(f'on_frost_init: {repr(e)}')
-        return None, None, None, None
+        return None, None, None
 
     def frost_round1(self, session_id):
         try:
@@ -841,7 +845,7 @@ class FROSTClient(DKGClient):
         except Exception as e:
             jlog.error(f'frost_round1: {repr(e)}')
 
-    def on_frost_round1(self, nick, session_id, pubkeyhash, pub_nonce):
+    def on_frost_round1(self, nick, session_id, pub_nonce):
         try:
             coordinator = self.frost_coordinators.get(session_id)
             if not coordinator:
@@ -850,14 +854,14 @@ class FROSTClient(DKGClient):
                 jlog.debug('on_frost_round1: miminum pub_nonce set already '
                            'presented, ignoring additional pub_nonce')
                 return None, None, None, None, None
-            pubkey = self.find_pubkey_by_pubkeyhash(pubkeyhash)
-            if not pubkey:
-                raise Exception(f'pubkey for {pubkeyhash} not found')
-            if pubkey in coordinator.parties:
-                jlog.debug(f'pubkey {pubkey.hex()} already in'
+            pubkey = None
+            for party_pubk, party_nick in coordinator.parties.items():
+                if party_nick == nick:
+                    pubkey = party_pubk
+            if pubkey is None:
+                jlog.debug(f'pubkey for nick {nick} not found in the'
                            f' coordinator parties')
                 return None, None, None, None, None
-            coordinator.parties[pubkey] = nick
 
             if not pubkey in coordinator.sessions:
                 coordinator.sessions[pubkey] = {}

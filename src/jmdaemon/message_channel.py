@@ -1216,11 +1216,9 @@ class MessageChannel(object):
                         self.on_frostinit(nick, session_id)
                 elif _chunks[0] == 'frostround1':
                     session_id = _chunks[1]
-                    pubkeyhash = _chunks[2]
-                    pub_nonce = _chunks[3]
+                    pub_nonce = _chunks[2]
                     if self.on_frostround1:
-                        self.on_frostround1(
-                            nick, session_id, pubkeyhash, pub_nonce)
+                        self.on_frostround1(nick, session_id, pub_nonce)
                 elif _chunks[0] == 'frostagg1':
                     session_id = _chunks[1]
                     nonce_agg = _chunks[2]

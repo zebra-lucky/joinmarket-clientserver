@@ -762,12 +762,12 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
         return {'accepted': True}
 
     @JMFROSTRound1.responder
-    def on_JM_FROST_ROUND1(self, nick, hostpubkeyhash, session_id, pub_nonce):
+    def on_JM_FROST_ROUND1(self, nick, session_id, pub_nonce):
         self.frost_expected_msgs[nick]['frostagg1'] = {
             'session_id': session_id,
             'created': time.time(),
         }
-        round1_msg = f'{session_id} {hostpubkeyhash} {pub_nonce}'
+        round1_msg = f'{session_id} {pub_nonce}'
         self.mcc.prepare_privmsg(nick, "frostround1", round1_msg)
         return {'accepted': True}
 
@@ -1013,10 +1013,9 @@ class JMDaemonServerProtocol(amp.AMP, OrderbookWatch):
                             nick=nick, session_id=session_id)
         self.defaultCallbacks(d)
 
-    def on_frostround1(self, nick, session_id, hostpubkeyhash, pub_nonce):
+    def on_frostround1(self, nick, session_id, pub_nonce):
         d = self.callRemote(JMFROSTRound1Seen,
                             nick=nick, session_id=session_id,
-                            hostpubkeyhash=hostpubkeyhash,
                             pub_nonce=pub_nonce)
         self.defaultCallbacks(d)
 

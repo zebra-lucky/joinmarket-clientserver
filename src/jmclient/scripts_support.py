@@ -4,9 +4,7 @@ import asyncio
 import sys
 from functools import wraps
 
-from twisted.internet import reactor
-
-from jmbase import jmprint, stop_reactor
+from jmbase import stop_reactor
 
 
 def wrap_main(func):

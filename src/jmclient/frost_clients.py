@@ -198,7 +198,8 @@ class DKGClient:
     def on_dkg_init(self, nick, pubkeyhash, session_id, sig):
         try:
             if session_id in self.dkg_sessions:
-                raise Exception(f'session {session_id.hex()} already exists')
+                jlog.debug(f'session {session_id.hex()} already exists')
+                return None, None, None, None, None
             pubkey = self.find_pubkey_by_pubkeyhash(pubkeyhash)
             if not pubkey:
                 raise Exception(f'pubkey for {pubkeyhash.hex()} not found')

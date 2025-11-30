@@ -19,22 +19,17 @@ datas += [(f'{PROJECT_ROOT}/jmvenv/lib/python3.12/site-packages/'
            f'twisted/plugins/__init__.py', 'twisted/plugins')]
 datas += [(f'{PROJECT_ROOT}/jmvenv/lib/python3.12/site-packages/'
            f'twisted/plugins/txtorcon_endpoint_parser.py', 'twisted/plugins')]
+datas += [(f'{PROJECT_ROOT}/scripts/obwatch/orderbook.html', '.')]
+datas += [(f'{PROJECT_ROOT}/scripts/obwatch/vendor/bootstrap.min.css',
+           'vendor')]
+datas += [(f'{PROJECT_ROOT}/scripts/obwatch/vendor/jquery-3.5.1.slim.min.js',
+           'vendor')]
+datas += [(f'{PROJECT_ROOT}/scripts/obwatch/vendor/sorttable.js',
+           'vendor')]
 
 
 scripts = [
-    'scripts/add-utxo.py',
-    'scripts/bond-calculator.py',
-    'scripts/bumpfee.py',
-    'scripts/genwallet.py',
-    'scripts/jmwalletd.py',
-    'scripts/joinmarketd.py',
-    'scripts/receive-payjoin.py',
-    'scripts/sendpayment.py',
-    'scripts/sendtomany.py',
-    'scripts/tumbler.py',
-    'scripts/wallet-tool.py',
-    'scripts/yg-privacyenhanced.py',
-    'scripts/yield-generator-basic.py',
+    'scripts/obwatch/ob-watcher.py',
 ]
 
 
@@ -42,8 +37,6 @@ hiddenimports = [
     'chromalog.mark.helpers',
     'chromalog.mark.helpers.simple',
     'twisted.plugins',
-#    'twisted.plugins.autobahn_endpoints',
-#    'twisted.plugins.autobahn_twistd',
     'twisted.plugins.txtorcon_endpoint_parser',
 ]
 

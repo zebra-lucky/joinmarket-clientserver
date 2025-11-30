@@ -2,7 +2,9 @@
 
 set -e
 
-PROJECT_ROOT="$(dirname "$(readlink -e "$0")")/../../.."
+export JM_VERSION="${JM_VERSION:-0.1-testbuild}"
+
+PROJECT_ROOT=$(realpath "$(dirname "$(readlink -e "$0")")/../../..")
 VENVPATH=$PROJECT_ROOT/jmvenv
 JM_ROOT=$PROJECT_ROOT
 
@@ -56,11 +58,78 @@ ls -l dist/joinmarket-clientserver/
 
 cd dist
 
-export JM_VERSION="${JM_VERSION}"
-
 mv joinmarket-clientserver joinmarket-clientserver-${JM_VERSION}
 
 tar -czvf joinmarket-clientserver-${JM_VERSION}.tgz \
           joinmarket-clientserver-${JM_VERSION}
 
 ls -l
+
+cd ..
+
+rm joinmarket-clientserver.spec
+
+rm -rf build
+
+cp contrib/build-linux/pyinstaller-build/joinmarket-clientserver-qt.spec .
+
+pyinstaller -y joinmarket-clientserver-qt.spec
+
+ls -l dist/joinmarket-clientserver/
+
+cd dist
+
+mv joinmarket-clientserver joinmarket-clientserver-qt-${JM_VERSION}
+
+tar -czvf joinmarket-clientserver-qt-${JM_VERSION}.tgz \
+          joinmarket-clientserver-qt-${JM_VERSION}
+
+ls -l
+
+cd ..
+
+rm joinmarket-clientserver-qt.spec
+
+rm -rf build
+
+cp contrib/build-linux/pyinstaller-build/joinmarket-clientserver-snicker.spec .
+
+pyinstaller -y joinmarket-clientserver-snicker.spec
+
+ls -l dist/joinmarket-clientserver/
+
+cd dist
+
+mv joinmarket-clientserver joinmarket-clientserver-snicker-${JM_VERSION}
+
+tar -czvf joinmarket-clientserver-snicker-${JM_VERSION}.tgz \
+          joinmarket-clientserver-snicker-${JM_VERSION}
+
+ls -l
+
+cd ..
+
+rm joinmarket-clientserver-snicker.spec
+
+rm -rf build
+
+cp contrib/build-linux/pyinstaller-build/joinmarket-clientserver-obwatch.spec .
+
+pyinstaller -y joinmarket-clientserver-obwatch.spec
+
+ls -l dist/joinmarket-clientserver/
+
+cd dist
+
+mv joinmarket-clientserver joinmarket-clientserver-obwatch-${JM_VERSION}
+
+tar -czvf joinmarket-clientserver-obwatch-${JM_VERSION}.tgz \
+          joinmarket-clientserver-obwatch-${JM_VERSION}
+
+ls -l
+
+cd ..
+
+rm joinmarket-clientserver-obwatch.spec
+
+rm -rf build

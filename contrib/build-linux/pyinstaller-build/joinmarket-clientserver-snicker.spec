@@ -22,19 +22,12 @@ datas += [(f'{PROJECT_ROOT}/jmvenv/lib/python3.12/site-packages/'
 
 
 scripts = [
-    'scripts/add-utxo.py',
-    'scripts/bond-calculator.py',
-    'scripts/bumpfee.py',
-    'scripts/genwallet.py',
-    'scripts/jmwalletd.py',
-    'scripts/joinmarketd.py',
-    'scripts/receive-payjoin.py',
-    'scripts/sendpayment.py',
-    'scripts/sendtomany.py',
-    'scripts/tumbler.py',
-    'scripts/wallet-tool.py',
-    'scripts/yg-privacyenhanced.py',
-    'scripts/yield-generator-basic.py',
+    'scripts/snicker/create-snicker-proposal.py',
+    'scripts/snicker/receive-snicker.py',
+    'scripts/snicker/snicker-finder.py',
+    'scripts/snicker/snicker-recovery.py',
+    'scripts/snicker/snicker-seed-tx.py',
+    'scripts/snicker/snicker-server.py',
 ]
 
 
@@ -42,8 +35,6 @@ hiddenimports = [
     'chromalog.mark.helpers',
     'chromalog.mark.helpers.simple',
     'twisted.plugins',
-#    'twisted.plugins.autobahn_endpoints',
-#    'twisted.plugins.autobahn_twistd',
     'twisted.plugins.txtorcon_endpoint_parser',
 ]
 

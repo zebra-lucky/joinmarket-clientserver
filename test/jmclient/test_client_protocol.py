@@ -25,7 +25,7 @@ from twisted.protocols.amp import UnknownRemoteError
 from twisted.protocols import amp
 from twisted.test import proto_helpers
 from taker_test_data import t_raw_signed_tx
-from commontest import default_max_cj_fee, AsyncioTestCase
+from commontest import default_max_cj_fee, TrialTestCase
 
 pytestmark = pytest.mark.usefixtures("setup_regtest_bitcoind")
 
@@ -52,7 +52,7 @@ class DummyTaker(Taker):
     def default_taker_info_callback(self, infotype, msg):
         jlog.debug(infotype + ":" + msg)
 
-    def initialize(self, orderbook, fidelity_bonds_info):
+    async def initialize(self, orderbook, fidelity_bonds_info):
         """Once the daemon is active and has returned the current orderbook,
         select offers, re-initialize variables and prepare a commitment,
         then send it to the protocol to fill offers.
@@ -65,7 +65,7 @@ class DummyTaker(Taker):
             return (True, 1000000, "aa"*32, {'dummy':'revelation'},
                     orderbook[:2])
 
-    def receive_utxos(self, ioauth_data):
+    async def receive_utxos(self, ioauth_data):
         """Triggered when the daemon returns utxo data from
         makers who responded; this is the completion of phase 1
         of the protocol
@@ -77,7 +77,7 @@ class DummyTaker(Taker):
                     base64.b16decode(t_raw_signed_tx, casefold=True))
 
 
-    def on_sig(self, nick, sigb64):
+    async def on_sig(self, nick, sigb64):
         """For test, we exit 'early' on first message, since this marks the end
         of client-server communication with the daemon.
         """
@@ -102,14 +102,14 @@ class DummyMaker(Maker):
         self.offerlist = self.create_my_orders()
         self.fidelity_bond = None
 
-    def try_to_create_my_orders(self):
+    async def try_to_create_my_orders(self):
         pass
 
-    def on_auth_received(self, nick, offer, commitment, cr, amount, kphex):
+    async def on_auth_received(self, nick, offer, commitment, cr, amount, kphex):
         # success, utxos, auth_pub, cj_addr, change_addr, btc_sig
         return True, [], b"", '', '', ''
 
-    def on_tx_received(self, nick, tx, offerinfo):
+    async def on_tx_received(self, nick, tx, offerinfo):
         # success, sigs
         return True, []
 
@@ -133,7 +133,7 @@ class DummyMaker(Maker):
             'txfee': 0
         }]
 
-    def oid_to_order(self, cjorder, amount):
+    async def oid_to_order(self, cjorder, amount):
         # utxos, cj_addr, change_addr
         return [], '', ''
 
@@ -277,7 +277,7 @@ class DummyClientProtocolFactory(JMClientProtocolFactory):
         return JMTakerClientProtocol(self, self.client, nick_priv=b"\xaa"*32 + b"\x01")
 
 
-class TrialTestJMClientProto(AsyncioTestCase):
+class TrialTestJMClientProto(TrialTestCase):
 
     def setUp(self):
         global clientfactory
@@ -322,7 +322,7 @@ class TrialTestJMClientProto(AsyncioTestCase):
         pass
 
 
-class TestMakerClientProtocol(AsyncioTestCase):
+class TestMakerClientProtocol(TrialTestCase):
     """
     very basic test case for JMMakerClientProtocol
 

@@ -480,9 +480,10 @@ async def wallet_showutxos(wallet_service: WalletService, showprivkey: bool,
             if showprivkey:
                 unsp[us]['privkey'] = wallet_service.get_wif_path(av['path'])
             if locktime:
-                unsp[us]["locktime"] = str(
+                unsp[us]["locktime"] = (
                     datetime.datetime.fromtimestamp(0, datetime.UTC) +
-                    datetime.timedelta(seconds=locktime))
+                    datetime.timedelta(seconds=locktime)
+                ).strftime('%Y-%m-%d %H:%M:%S')
 
     used_commitments, external_commitments = podle.get_podle_commitments()
     for u, ec in external_commitments.items():
@@ -1454,9 +1455,10 @@ async def wallet_gettimelockaddress(wallet, locktime_string):
         jmprint("Error: not a fidelity bond wallet", "error")
         return ""
 
-    lock_datetime = datetime.datetime.strptime(locktime_string, "%Y-%m")
+    lock_datetime = datetime.datetime.strptime(
+        locktime_string, "%Y-%m").replace(tzinfo=datetime.UTC)
     if (jm_single().config.get("BLOCKCHAIN", "network") == "mainnet"
-            and lock_datetime <= datetime.datetime.now()):
+            and lock_datetime <= datetime.datetime.now(datetime.UTC)):
         jmprint("Error: locktime must be a future date", "error")
         return ""
 

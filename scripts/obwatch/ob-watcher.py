@@ -372,8 +372,9 @@ class OrderbookPageRequestHeader(http.server.SimpleHTTPRequestHandler):
                     2 * bitcoin_unit_to_power(html.unescape(btc_unit))),
                     html.unescape(btc_unit))
                 conf_time_str = (
-                    str(datetime.datetime.fromtimestamp(0, datetime.UTC) +
-                    datetime.timedelta(seconds=conf_time)))
+                    datetime.datetime.fromtimestamp(0, datetime.UTC) +
+                    datetime.timedelta(seconds=conf_time)
+                ).strftime('%Y-%m-%d %H:%M:%S')
                 utxo_value_str = sat_to_unit(utxo_data["value"], html.unescape(btc_unit))
             bondtable += ("<tr>"
                 + elem(bond_data.maker_nick)

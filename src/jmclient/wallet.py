@@ -849,8 +849,7 @@ class BaseWallet(object):
                               "storage.")
 
         if not timestamp:
-            timestamp = datetime.datetime.now(
-                datetime.UTC).strftime('%Y/%m/%d %H:%M:%S')
+            timestamp = datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')
 
         storage.data[b'network'] = network.encode('ascii')
         storage.data[b'created'] = timestamp.encode('ascii')
@@ -3715,8 +3714,7 @@ class FrostWallet(BIP39WalletMixin, BIP32PurposedFrostMixin):
                               f'recovery storage wallet type: {cls.TYPE}.')
 
         if not timestamp:
-            timestamp = datetime.datetime.now(
-                datetime.UTC).strftime('%Y/%m/%d %H:%M:%S')
+            timestamp = datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')
 
         dkg_storage.data[b'network'] = bnetwork
         dkg_storage.data[b'created'] = timestamp.encode('ascii')

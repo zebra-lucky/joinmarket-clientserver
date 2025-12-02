@@ -13,7 +13,7 @@ dependencies = [
     "chromalog==1.0.5",
     "cryptography==42.0.4",
     "service-identity==21.1.0",
-    "twisted@git+https://github.com/zebra-lucky/twisted@fix_from_pr11890#egg=twisted",
+    "twisted@git+https://github.com/zebra-lucky/twisted@fix_from_pr11890-25.5.0#egg=twisted",
     "txtorcon==23.11.0",
 ]
 
@@ -25,7 +25,7 @@ jmclient = [
     "argon2_cffi==21.3.0",
     "autobahn==20.12.3",
     "fastbencode==0.3.6",
-    "klein==20.6.0",
+    "klein==24.8.0",
     "mnemonic==0.20",
     "pyjwt==2.4.0",
     "werkzeug==2.2.3",

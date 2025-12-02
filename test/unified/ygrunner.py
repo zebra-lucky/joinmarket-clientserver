@@ -230,7 +230,7 @@ def get_addr_and_fund(yg):
 
     # force wallet to check for the new coins so the new
     # yg offers will include them:
-    yg.wallet_service.transaction_monitor()
+    yg.wallet_service.transaction_monitor()  # FIXME to coroutine call
 
     # publish a new offer:
     yg.offerlist = yg.create_my_orders()

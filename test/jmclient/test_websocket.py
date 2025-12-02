@@ -29,7 +29,7 @@ class ServerTProtocol(JmwalletdWebSocketServerProtocol):
 
     def onMessage(self, payload, isBinary):
         super().onMessage(payload, isBinary)
-        self.factory.on_message_d.callback(None)
+        self.factory.on_message_deferred.callback(None)
 
 
 class ClientTProtocol(WebSocketClientProtocol):
@@ -56,7 +56,7 @@ class ClientTProtocol(WebSocketClientProtocol):
             payload = payload.decode("utf-8")
             jlog.info("Text message received: {}".format(payload))
         self.factory.notifs += 1
-        self.factory.on_message_d.callback(None)
+        self.factory.on_message_deferred.callback(None)
         # ensure we got the transaction message expected:
         deser_notif = json.loads(payload)
         assert deser_notif["txid"] == test_tx_hex_txid
@@ -77,7 +77,7 @@ class WebsocketTestBase(object):
         self.wss_url = "ws://127.0.0.1:" + str(self.wss_port)
         self.wss_factory = JmwalletdWebSocketServerFactory(self.wss_url, token_authority)
         self.wss_factory.protocol = ServerTProtocol
-        self.wss_factory.on_message_d = Deferred()
+        self.wss_factory.on_message_deferred = Deferred()
         self.listeningport = listenWS(self.wss_factory, contextFactory=None)
         self.test_tx = CTransaction.deserialize(hextobin(test_tx_hex_1))
 
@@ -87,18 +87,18 @@ class WebsocketTestBase(object):
     @inlineCallbacks
     def do_test(self):
         self.client_factory = WebSocketClientFactory("ws://127.0.0.1:"+str(self.wss_port))
-        self.client_factory.on_message_d = Deferred()
+        self.client_factory.on_message_deferred = Deferred()
 
         self.client_factory.protocol = ClientTProtocol
         # keep track of the connector object so we can close it manually:
         self.client_connector = connectWS(self.client_factory)
 
         # wait on server to receive message
-        yield self.wss_factory.on_message_d
+        yield self.wss_factory.on_message_deferred
 
         yield self.fire_tx_notif()
         # wait on client to receive message
-        yield self.client_factory.on_message_d
+        yield self.client_factory.on_message_deferred
 
         assert self.client_factory.notifs == 1
 

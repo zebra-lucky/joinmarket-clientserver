@@ -8,7 +8,7 @@ import abc
 import base64
 from twisted.python.log import startLogging
 from twisted.application.service import Service
-from twisted.internet import task
+from twisted.internet import task, defer
 from optparse import OptionParser
 from jmbase import get_log
 from jmclient import (Maker, jm_single, load_program_config,
@@ -289,6 +289,7 @@ class YieldGeneratorBasic(YieldGenerator):
 
 
 class YieldGeneratorService(Service):
+
     def __init__(self, wallet_service, daemon_host, daemon_port, yg_config):
         self.wallet_service = wallet_service
         self.daemon_host = daemon_host
@@ -300,6 +301,7 @@ class YieldGeneratorService(Service):
         self.setup_fns = []
         self.cleanup_fns = []
 
+    @defer.inlineCallbacks
     def startService(self):
         """ We instantiate the Maker class only
         here as its constructor will automatically
@@ -309,23 +311,23 @@ class YieldGeneratorService(Service):
         no need to check this here.
         """
         for setup in self.setup_fns:
-            # we do not catch Exceptions in setup,
-            # deliberately; this must be caught and distinguished
+            # exceptions returned from startService
+            # this must be caught and distinguished
             # by whoever started the service.
-            setup_res = setup()
-            if asyncio.iscoroutine(setup_res):
-                raise Exception('YieldGeneratorService can not have '
-                                'asyncio setup functions')
+            try:
+                setup_res = setup()
+                if asyncio.iscoroutine(setup_res):
+                    yield defer.Deferred.fromCoroutine(setup_res)
+            except Exception as e:
+                return e
 
         # TODO genericise to any YG class:
         self.yieldgen = YieldGeneratorBasic(self.wallet_service, self.yg_config)
         self.clientfactory = JMClientProtocolFactory(self.yieldgen, proto_type="MAKER")
-        wallet = self.wallet_service.wallet
         # here 'start_reactor' does not start the reactor but instantiates
         # the connection to the daemon backend; note daemon=False, i.e. the daemon
         # backend is assumed to be started elsewhere; we just connect to it with a client.
-        start_reactor(self.daemon_host, self.daemon_port, self.clientfactory,
-                      rs=False, gui=True)
+        start_reactor(self.daemon_host, self.daemon_port, self.clientfactory, rs=False)
         # monitor the Maker object, just to check if it's still in an "up" state, marked
         # by the aborted instance var:
         self.monitor_loop = task.LoopingCall(self.monitor)
@@ -353,6 +355,7 @@ class YieldGeneratorService(Service):
         """
         self.cleanup_fns.append(cleanup)
 
+    @defer.inlineCallbacks
     def stopService(self):
         """ TODO need a method exposed to gracefully
         shut down a maker bot.
@@ -362,7 +365,14 @@ class YieldGeneratorService(Service):
             self.clientfactory.proto_client.request_mc_shutdown()
             super().stopService()
             for cleanup in self.cleanup_fns:
-                cleanup()
+                try:
+                    cleanup_res = cleanup()
+                    if asyncio.iscoroutine(cleanup_res):
+                        yield defer.Deferred.fromCoroutine(cleanup_res)
+                except Exception as e:
+                    str_e = str(e)
+                    err_msg = f'error {str_e}' if str_e else 'error'
+                    jlog.warn(f'stopService cleanup_fn {cleanup} {err_msg}')
 
     def isRunning(self):
         return self.running == 1

@@ -937,7 +937,9 @@ class JMWalletDaemon(Service):
             self.services["maker"].addSetup(setup_set_coinjoin_state)
             # Service startup now checks and updates coinjoin state,
             # assuming setup is successful:
-            self.services["maker"].startService()
+            exc = await self.services["maker"].startService()
+            if exc:
+                raise exc
 
             return make_jmwalletd_response(request, status=202)
 

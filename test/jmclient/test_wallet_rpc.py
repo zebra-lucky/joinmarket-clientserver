@@ -28,7 +28,7 @@ from jmclient import (
     storage,
 )
 from jmclient.wallet_rpc import api_version_string, CJ_MAKER_RUNNING, CJ_NOT_RUNNING
-from commontest import make_wallets, AsyncioTestCase
+from commontest import make_wallets, TrialTestCase
 from test_coinjoin import make_wallets_to_list, sync_wallets
 
 from test_websocket import ClientTProtocol, test_tx_hex_1, test_tx_hex_txid
@@ -41,6 +41,7 @@ testfilename = "testwrpc"
 
 jlog = get_log()
 
+
 class JMWalletDaemonT(JMWalletDaemon):
     def check_cookie(self, request, *args, **kwargs):
         if self.auth_disabled:
@@ -48,7 +49,7 @@ class JMWalletDaemonT(JMWalletDaemon):
         return super().check_cookie(request, *args, **kwargs)
 
 
-class WalletRPCTestBase(AsyncioTestCase):
+class WalletRPCTestBase(TrialTestCase):
     """ Base class for set up of tests of the
     Wallet RPC calls using the wallet_rpc.JMWalletDaemon service.
     """
@@ -65,7 +66,8 @@ class WalletRPCTestBase(AsyncioTestCase):
     # wallet type
     wallet_cls = SegwitWallet
 
-    async def asyncSetUp(self):
+    @defer.inlineCallbacks
+    def setUp(self):
         load_test_config()
         self.clean_out_wallet_files()
         jm_single().bc_interface.tick_forward_chain_interval = 5
@@ -97,12 +99,14 @@ class WalletRPCTestBase(AsyncioTestCase):
         self.listener_rpc = r
         self.listener_ws = s
         wallet_structures = [self.wallet_structure] * 2
-        wallets = await make_wallets(
+        coro = make_wallets(
             1, wallet_structures=[wallet_structures[0]],
             mean_amt=self.mean_amt, wallet_cls=self.wallet_cls)
+        wallets = yield defer.Deferred.fromCoroutine(coro)
         self.daemon.services["wallet"] = make_wallets_to_list(wallets)[0]
         jm_single().bc_interface.tickchain()
-        await sync_wallets([self.daemon.services["wallet"]])
+        coro = sync_wallets([self.daemon.services["wallet"]])
+        yield defer.Deferred.fromCoroutine(coro)
         # dummy tx example to force a notification event:
         self.test_tx = CTransaction.deserialize(hextobin(test_tx_hex_1))
         # auth token is not set at the start
@@ -172,7 +176,6 @@ class WalletRPCTestBase(AsyncioTestCase):
 
     def tearDown(self):
         self.clean_out_wallet_files()
-        reactor.disconnectAll()
         for dc in reactor.getDelayedCalls():
             if not dc.cancelled:
                 dc.cancel()
@@ -183,10 +186,12 @@ class WalletRPCTestBase(AsyncioTestCase):
         # only fire if everything is finished:
         return defer.gatherResults([d1, d2])
 
+
 class WalletRPCTestBaseFB(WalletRPCTestBase):
     wallet_cls = SegwitWalletFidelityBonds
     # we are using fresh (empty) wallets for these tests
     wallet_structure = [0, 0, 0, 0, 0]
+
 
 class ClientNotifTestProto(ClientTProtocol):
 
@@ -195,7 +200,9 @@ class ClientNotifTestProto(ClientTProtocol):
                         self.factory.callbackfn)
         super().sendAuth()
 
+
 class ClientNotifTestFactory(WebSocketClientFactory):
+
     def __init__(self, *args, **kwargs):
         if "delay" in kwargs:
             self.delay = kwargs.pop("delay", None)
@@ -203,10 +210,15 @@ class ClientNotifTestFactory(WebSocketClientFactory):
             self.callbackfn = kwargs.pop("callbackfn", None)
         super().__init__(*args, **kwargs)
 
+
 class TrialTestWRPC_WS(WalletRPCTestBase):
     """ class for testing websocket subscriptions/events etc.
     """
+    def tearDown(self):
+        reactor.disconnectAll()
+        super().tearDown()
 
+    @defer.inlineCallbacks
     def test_notif(self):
         # simulate the daemon already having created
         # an active session (which it usually does when
@@ -222,8 +234,11 @@ class TrialTestWRPC_WS(WalletRPCTestBase):
         self.client_factory.protocol = ClientNotifTestProto
         self.client_factory.protocol.ACCESS_TOKEN = self.daemon.token.issue()["token"].encode("utf8")
         self.client_connector = connectWS(self.client_factory)
+        self.client_factory.on_message_deferred = defer.Deferred()
         self.attempt_receipt_counter = 0
-        return task.deferLater(reactor, 0.0, self.wait_to_receive)
+        # wait on client to receive message
+        yield self.client_factory.on_message_deferred
+        yield task.deferLater(reactor, 0.0, self.wait_to_receive)
 
     def wait_to_receive(self):
         d = task.deferLater(reactor, 0.1, self.checkNotifs)
@@ -242,10 +257,16 @@ class TrialTestWRPC_WS(WalletRPCTestBase):
             return d
 
     def fire_tx_notif(self):
-        self.daemon.wss_factory.sendTxNotification(self.test_tx,
-                                            test_tx_hex_txid)
+        self.daemon.wss_factory.sendTxNotification(
+            self.test_tx, test_tx_hex_txid)
+
 
 class TrialTestWRPC_FB(WalletRPCTestBaseFB):
+
+    def tearDown(self):
+        reactor.disconnectAll()
+        super().tearDown()
+
     @defer.inlineCallbacks
     def test_gettimelockaddress(self):
         self.daemon.auth_disabled = True
@@ -299,7 +320,12 @@ class TrialTestWRPC_FB(WalletRPCTestBaseFB):
         # be MAKER_RUNNING since no non-TL-type coin existed:
         assert self.daemon.coinjoin_state == CJ_NOT_RUNNING
 
+
 class TrialTestWRPC_DisplayWallet(WalletRPCTestBase):
+
+    def tearDown(self):
+        reactor.disconnectAll()
+        super().tearDown()
 
     @defer.inlineCallbacks
     def do_session_request(self, agent, addr, handler=None, token=None):
@@ -515,12 +541,14 @@ class TrialTestWRPC_DisplayWallet(WalletRPCTestBase):
         yield self.do_request(agent, b"POST", addr, body,
                               self.process_direct_send_response)
         # before querying the wallet display, set a label to check:
-        labeladdr = self.daemon.services["wallet"].get_addr(0,0,0)
+        coro = self.daemon.services["wallet"].get_addr(0,0,0)
+        labeladdr = yield defer.Deferred.fromCoroutine(coro)
         self.daemon.services["wallet"].set_address_label(labeladdr,
                                         "test-wallet-rpc-label")
         # force the wallet service txmonitor to wake up, to see the new
         # tx before querying /display:
-        self.daemon.services["wallet"].transaction_monitor()
+        coro = self.daemon.services["wallet"].transaction_monitor()
+        yield defer.Deferred.fromCoroutine(coro)
         addr = self.get_route_root()
         addr += "/wallet/"
         addr += self.daemon.wallet_name
@@ -755,6 +783,7 @@ class TrialTestWRPC_DisplayWallet(WalletRPCTestBase):
 
 
 class TrialTestWRPC_JWT(WalletRPCTestBase):
+
     @defer.inlineCallbacks
     def do_request(self, agent, method, addr, body, handler, token):
         headers = Headers({"Authorization": ["Bearer " + token]})

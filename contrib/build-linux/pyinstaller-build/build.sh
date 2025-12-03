@@ -49,6 +49,7 @@ git checkout 1.0.20-RELEASE
 make check
 sudo make install
 cd ..
+rm -rf libsodium
 
 cp contrib/build-linux/pyinstaller-build/joinmarket-clientserver.spec .
 
@@ -67,9 +68,7 @@ ls -l
 
 cd ..
 
-rm joinmarket-clientserver.spec
-
-rm -rf build
+rm -rf build joinmarket-clientserver.spec
 
 cp contrib/build-linux/pyinstaller-build/joinmarket-clientserver-qt.spec .
 
@@ -88,9 +87,7 @@ ls -l
 
 cd ..
 
-rm joinmarket-clientserver-qt.spec
-
-rm -rf build
+rm -rf build joinmarket-clientserver-qt.spec
 
 cp contrib/build-linux/pyinstaller-build/joinmarket-clientserver-snicker.spec .
 
@@ -109,9 +106,7 @@ ls -l
 
 cd ..
 
-rm joinmarket-clientserver-snicker.spec
-
-rm -rf build
+rm -rf build joinmarket-clientserver-snicker.spec
 
 cp contrib/build-linux/pyinstaller-build/joinmarket-clientserver-obwatch.spec .
 
@@ -130,6 +125,31 @@ ls -l
 
 cd ..
 
-rm joinmarket-clientserver-obwatch.spec
+rm -rf build joinmarket-clientserver-obwatch.spec
 
-rm -rf build
+git clone https://github.com/zebra-lucky/joinmarket-custom-scripts
+
+cd joinmarket-custom-scripts/
+
+git checkout add-testnet4
+
+cd ..
+
+cp contrib/build-linux/pyinstaller-build/start-dn.spec .
+
+pyinstaller -y start-dn.spec
+
+ls -l dist/joinmarket-clientserver/
+
+cd dist
+
+mv joinmarket-clientserver joinmarket-clientserver-start-dn-${JM_VERSION}
+
+tar -czvf joinmarket-clientserver-start-dn-${JM_VERSION}.tgz \
+          joinmarket-clientserver-start-dn-${JM_VERSION}
+
+ls -l
+
+cd ..
+
+rm -rf build joinmarket-custom-scripts start-dn.spec

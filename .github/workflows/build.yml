@@ -94,3 +94,12 @@ jobs:
           asset_path: dist/joinmarket-clientserver-obwatch-${{ github.ref_name}}.tgz
           asset_name: joinmarket-clientserver-obwatch-${{ github.ref_name}}.tgz
           asset_content_type: application/octet-stream
+      - name: Upload start-dn Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: dist/joinmarket-clientserver-start-dn-${{ github.ref_name}}.tgz
+          asset_name: joinmarket-clientserver-start-dn-${{ github.ref_name}}.tgz
+          asset_content_type: application/octet-stream

@@ -83,7 +83,7 @@ https://github.com/BlockstreamResearch/bip-frost-dkg/, placed in the
 `jmfrost/chilldkg_ref` package.
 
 Uses channel level commands `dkginit`, `dkgpmsg1`, `dkgcmsg1`, `dkgpmsg2`,
-`dkgcmsg2`, `dkgfinalized` added to `jmdaemon/protocol.py`.
+`dkgcmsg2`, `dkgfinalized`, added to `jmdaemon/protocol.py`.
 
 NOTE: `dkgfinalized` is used to ensure all DKG party saw `dkgcmsg2` and
 saved DKG data to wallet/recovery data.
@@ -103,7 +103,7 @@ https://github.com/siv2r/bip-frost-signing/, placed in the
 `jmfrost/frost_ref` package.
 
 Uses channel level commands `frostreq`, `frostack`, `frostinit`, `frostround1`,
-`frostagg1`, `frostround2` added to `jmdaemon/protocol.py`.
+`frostagg1`, `frostround2`, added to `jmdaemon/protocol.py`.
 
 Commands in the `jmbase/commands.py`: `JMFROSTReq`, `JMFROSTAck`,
 `JMFROSTInit`, `JMFROSTRound1`, `JMFROSTAgg1`, `JMFROSTRound2`,
@@ -116,6 +116,15 @@ Responders on the commands in the `jmclient/client_protocol.py`,
 In the FROST sessions the party which need new signature is named Coordinator.
 
 ## Details on DKG message channel commands
+
+| Coordinator |      | Party |
+| :---------:|:----:|:-------:|
+|!dkginit (public)|>>>||
+||<<<|!dkgpmsg1 (private unencrypted)|
+|!dkgcmsg1 (private unencrypted)|>>>||
+||<<<|!dkgpmsg2 (private unencrypted)|
+|!dkgcmsg2 (private unencrypted)|>>>||
+||<<<|!dkgfinalied (private unencrypted)|
 
 **dkginit**: public broadcast command from coordinator to request DKG
 exchange
@@ -193,6 +202,15 @@ self.mcc.prepare_privmsg(nick, "dkgfinalized", msg)
 - `session_id`: 32 bytes to idenify DKG session
 
 ## Details on FROST message channel commands
+
+| Coordinator |      | Party |
+| :---------:|:----:|:-------:|
+|!frostreq (public)|>>>||
+||<<<|!frostack (private unencrypted)|
+|!frostinit (private encrypted)|>>>||
+||<<<|!frostround1 (private encrypted)|
+|!frostagg1 (private encrypted)|>>>||
+||<<<|!frostround2 (private encrypted)|
 
 **frostreq**: public broadcast command from coordinator to request encrypted
 FROST exchange
